@@ -1,0 +1,477 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Singapore DR Infra - Final Production Ready Version
+
+Parameters:
+  LatestAmiId:
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64
+  KeyName:
+    Type: 'AWS::EC2::KeyPair::KeyName'
+    Default: TEST-SING
+
+Resources:
+  # --- [1] VPCs ---
+  VpcSing:
+    Type: 'AWS::EC2::VPC'
+    Properties:
+      CidrBlock: 10.3.0.0/16
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: Sing-Cloud-VPC
+
+  VpcIdc:
+    Type: 'AWS::EC2::VPC'
+    Properties:
+      CidrBlock: 10.4.0.0/16
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: Sing-IDC-VPC
+
+  # --- [2] Subnets ---
+  SubSingPub1:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref VpcSing
+      CidrBlock: 10.3.1.0/24
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: Sing-Pub-1
+
+  SubSingPriv1:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref VpcSing
+      CidrBlock: 10.3.3.0/24
+      Tags:
+        - Key: Name
+          Value: Sing-Priv-1
+
+  SubIdc4:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref VpcIdc
+      CidrBlock: 10.4.1.0/24
+      Tags:
+        - Key: Name
+          Value: Sing-IDC-Sub-4
+
+  # --- [3] Gateways & Connectivity ---
+  IgwSing:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: Sing-IGW
+
+  AttachIgwSing:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VpcSing
+      InternetGatewayId: !Ref IgwSing
+
+  # --- [4] Transit Gateway (TGW) ---
+  SingTgw:
+    Type: AWS::EC2::TransitGateway
+    Properties:
+      Description: Singapore TGW for DR
+      # [중요] 서울 리전 에러 방지용 설정
+      DefaultRouteTableAssociation: disable
+      DefaultRouteTablePropagation: disable
+      Tags:
+        - Key: Name
+          Value: Sing-TGW
+
+  SingAttachCloud:
+    Type: AWS::EC2::TransitGatewayAttachment
+    DependsOn: SingTgw
+    Properties:
+      VpcId: !Ref VpcSing
+      SubnetIds:
+        - !Ref SubSingPriv1
+      TransitGatewayId: !Ref SingTgw
+
+  SingAttachIdc:
+    Type: AWS::EC2::TransitGatewayAttachment
+    DependsOn: SingTgw
+    Properties:
+      VpcId: !Ref VpcIdc
+      SubnetIds:
+        - !Ref SubIdc4
+      TransitGatewayId: !Ref SingTgw
+
+  # --- [5] Route Tables & Routes ---
+
+  # 1. Public Subnet RT (NAT 인스턴스용)
+  RtSingPub:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VpcSing
+      Tags:
+        - Key: Name
+          Value: RT-Sing-Public
+
+  RoutePubToIgw:
+    Type: AWS::EC2::Route
+    DependsOn: AttachIgwSing
+    Properties:
+      RouteTableId: !Ref RtSingPub
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref IgwSing
+
+  RoutePubToIdc:
+    Type: AWS::EC2::Route
+    DependsOn: SingAttachCloud
+    Properties:
+      RouteTableId: !Ref RtSingPub
+      DestinationCidrBlock: 10.4.0.0/16
+      TransitGatewayId: !Ref SingTgw
+
+  RoutePubToSeoul:
+    Type: AWS::EC2::Route
+    DependsOn: SingAttachCloud
+    Properties:
+      RouteTableId: !Ref RtSingPub
+      DestinationCidrBlock: 10.0.0.0/8
+      TransitGatewayId: !Ref SingTgw
+
+  # 2. Private Subnet RT (Web 서버용)
+  RtSingPriv:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VpcSing
+      Tags:
+        - Key: Name
+          Value: RT-Sing-Private
+
+  RoutePrivToNat:
+    Type: AWS::EC2::Route
+    DependsOn: InstNat
+    Properties:
+      RouteTableId: !Ref RtSingPriv
+      DestinationCidrBlock: 0.0.0.0/0
+      InstanceId: !Ref InstNat
+
+  RoutePrivToTgw:
+    Type: AWS::EC2::Route
+    DependsOn: SingAttachCloud
+    Properties:
+      RouteTableId: !Ref RtSingPriv
+      DestinationCidrBlock: 10.0.0.0/8
+      TransitGatewayId: !Ref SingTgw
+
+  # 3. IDC Subnet RT
+  RtIdc:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VpcIdc
+      Tags:
+        - Key: Name
+          Value: RT-Sing-IDC
+
+  RouteIdcAllToTgw:
+    Type: AWS::EC2::Route
+    DependsOn: SingAttachIdc
+    Properties:
+      RouteTableId: !Ref RtIdc
+      DestinationCidrBlock: 0.0.0.0/0
+      TransitGatewayId: !Ref SingTgw
+
+  # --- [6] TGW 전용 라우팅 테이블 ---
+  MySingTgwRouteTable:
+    Type: AWS::EC2::TransitGatewayRouteTable
+    Properties:
+      TransitGatewayId: !Ref SingTgw
+      Tags:
+        - Key: Name
+          Value: Sing-TGW-RT
+
+  SingTgwInternetRoute:
+    Type: AWS::EC2::TransitGatewayRoute
+    Properties:
+      DestinationCidrBlock: 0.0.0.0/0
+      TransitGatewayAttachmentId: !Ref SingAttachCloud
+      TransitGatewayRouteTableId: !Ref MySingTgwRouteTable
+
+  TgwRouteToVpc:
+    Type: AWS::EC2::TransitGatewayRoute
+    Properties:
+      DestinationCidrBlock: 10.3.0.0/16
+      TransitGatewayAttachmentId: !Ref SingAttachCloud
+      TransitGatewayRouteTableId: !Ref MySingTgwRouteTable
+
+  TgwRouteToIdc:
+    Type: AWS::EC2::TransitGatewayRoute
+    Properties:
+      DestinationCidrBlock: 10.4.0.0/16
+      TransitGatewayAttachmentId: !Ref SingAttachIdc
+      TransitGatewayRouteTableId: !Ref MySingTgwRouteTable
+
+  # TGW 연결 및 전파
+  SingCloudAssoc:
+    Type: AWS::EC2::TransitGatewayRouteTableAssociation
+    Properties:
+      TransitGatewayAttachmentId: !Ref SingAttachCloud
+      TransitGatewayRouteTableId: !Ref MySingTgwRouteTable
+
+  SingIdcAssoc:
+    Type: AWS::EC2::TransitGatewayRouteTableAssociation
+    Properties:
+      TransitGatewayAttachmentId: !Ref SingAttachIdc
+      TransitGatewayRouteTableId: !Ref MySingTgwRouteTable
+
+  SingCloudProp:
+    Type: AWS::EC2::TransitGatewayRouteTablePropagation
+    Properties:
+      TransitGatewayAttachmentId: !Ref SingAttachCloud
+      TransitGatewayRouteTableId: !Ref MySingTgwRouteTable
+
+  SingIdcProp:
+    Type: AWS::EC2::TransitGatewayRouteTablePropagation
+    Properties:
+      TransitGatewayAttachmentId: !Ref SingAttachIdc
+      TransitGatewayRouteTableId: !Ref MySingTgwRouteTable
+
+  # --- [7] Associations (서브넷-라우팅테이블 연결) ---
+  AssocPub:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SubSingPub1
+      RouteTableId: !Ref RtSingPub
+
+  AssocPriv:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SubSingPriv1
+      RouteTableId: !Ref RtSingPriv
+
+  AssocIdc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SubIdc4
+      RouteTableId: !Ref RtIdc
+
+  # --- [5] Security Groups ---
+  # [1] NAT 인스턴스 전용 보안 그룹 (인터넷 관문)
+  SgNatInstance:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Security Group for NAT Instance (Public)
+      VpcId: !Ref VpcSing
+      SecurityGroupIngress:
+        # 내부 통신: 같은 VPC 내 모든 통신 허용 (또는 10.3.0.0/16)
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+
+  # [2] 웹 서버 전용 보안 그룹 (Private)
+  SgWeb3:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Security Group for Private Web Server
+      VpcId: !Ref VpcSing
+      SecurityGroupIngress:
+        # 내부망 통신: IDC(10.4.x.x) 등과의 통신 허용
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+
+  # [3] IDC 전용 보안 그룹 (Private)
+  SgSingIdc:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: IDC Security Group for Slave DB and DNS
+      VpcId: !Ref VpcIdc # <- 반드시 VpcIdc를 참조해야 합니다!
+      SecurityGroupIngress:
+        # 내부망 전체 통신 허용 (TGW를 통한 서울/싱가포르 통신용)
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+
+  # --- [6] Instances ---
+  InstNat:
+    Type: 'AWS::EC2::Instance'
+    DependsOn: AttachIgwSing # <- IGW가 VPC에 붙은 뒤 인스턴스 생성 시작
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiId
+      SubnetId: !Ref SubSingPub1
+      SourceDestCheck: false
+      SecurityGroupIds:
+        - !Ref SgNatInstance
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: Sing-NAT-Inst
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          # 1. IP 포워딩 활성화
+          echo "net.ipv4.ip_forward = 1" >> /etc/sysctl.conf
+          sysctl -p
+
+          # 2. 인터페이스 이름 자동 감지 (ens5 등)
+          IFACE=$(ip -o -4 route show to default | awk '{print $5}')
+
+          # 3. iptables 초기화 및 규칙 재작성
+          dnf install iptables-services -y
+          systemctl enable --now iptables
+
+          iptables -F
+          iptables -t nat -F
+          
+          # 외부(80) -> 웹 서버(10.3.3.100:80)
+          iptables -t nat -A PREROUTING -p tcp --dport 80 -j DNAT --to-destination 10.3.3.100:80
+          # 나가는 트래픽 마스커레이드 (중요: 인터페이스 지정)
+          iptables -t nat -A POSTROUTING -o $IFACE -j MASQUERADE
+          # 돌아오는 패킷을 위한 마스커레이드 추가
+          iptables -t nat -A POSTROUTING -p tcp -d 10.3.3.100 --dport 80 -j MASQUERADE
+          
+          iptables-save > /etc/sysconfig/iptables
+
+  InstWeb3:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiId
+      SubnetId: !Ref SubSingPriv1
+      PrivateIpAddress: 10.3.3.100 # <- 주소를 100번으로 고정!
+      SecurityGroupIds:
+        - !Ref SgWeb3
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: Sing-Web-3
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          # 1. 시스템 업데이트 및 필수 패키지 설치
+          dnf update -y
+          dnf install -y httpd php php-mysqli php-fpm mariadb105
+
+          # 2. [핵심] SELinux 설정 - PHP가 네트워크를 통해 DB에 접속하는 것을 허용 (504 방지)
+          setsebool -P httpd_can_network_connect 1
+
+          # 3. 서비스 시작 및 자동 실행 설정
+          systemctl start httpd php-fpm
+          systemctl enable httpd php-fpm
+
+          # 4. 웹 디렉토리 권한 설정
+          chown -R ec2-user:apache /var/www/html
+          chmod -R 775 /var/www/html
+
+          # 5. DB 연동 메인 페이지 생성 (index.php)
+          cat <<'EOF' > /var/www/html/index.php
+          <?php
+          // 싱가포르 로컬 슬레이브 DB IP
+          $host = "10.4.1.100"; 
+          $user = "user1";
+          $pw = "password";
+          $db = "sqlDB";
+
+          // DB 연결 시도 (타임아웃 5초 설정)
+          mysqli_report(MYSQLI_REPORT_OFF);
+          $conn = mysqli_connect($host, $user, $pw, $db);
+
+          echo "<body style='text-align:center;padding-top:50px;font-family:sans-serif;background-color:#f4f7f6;'>";
+          echo "<div style='display:inline-block;border:2px solid #f39c12;padding:30px;border-radius:15px;background-color:#fff;box-shadow:0 4px 6px rgba(0,0,0,0.1);min-width:450px;'>";
+          
+          if(!$conn){
+              echo "<h1 style='color:#e74c3c;'>🇸🇬 Singapore DR Server</h1>";
+              echo "<h2 style='color:#7f8c8d;'>상태: <span style='color:#e67e22;'>DB 연결 대기 중...</span></h2>";
+              echo "<p style='background:#fdeaea;padding:10px;border-radius:5px;'><b>오류 내용:</b> " . mysqli_connect_error() . "</p>";
+              echo "<p style='color:#95a5a6;'>팁: TGW 피어링과 DB 복제 설정(START SLAVE)을 확인하세요.</p>";
+          } else {
+              echo "<h1 style='color:#2c3e50;'>🇸🇬 Singapore DR Server</h1>";
+              echo "<h2 style='color:#27ae60;'>상태: Slave DB 연동 성공! 🚀</h2>";
+              echo "<hr style='border:1px solid #eee;'>";
+
+              // 데이터 조회
+              $result = mysqli_query($conn, "SELECT * FROM userTBL ORDER BY id DESC");
+              
+              if (mysqli_num_rows($result) > 0) {
+                  echo "<table style='width:100%;border-collapse:collapse;margin-top:20px;'>";
+                  echo "<tr style='background-color:#f39c12;color:white;'><th>ID</th><th>이름</th><th>이메일</th></tr>";
+                  while($row = mysqli_fetch_assoc($result)) {
+                      echo "<tr style='border-bottom:1px solid #eee;'>";
+                      echo "<td style='padding:10px;'>".$row['id']."</td>";
+                      echo "<td style='padding:10px;'>".$row['name']."</td>";
+                      echo "<td style='padding:10px;'>".$row['email']."</td>";
+                      echo "</tr>";
+                  }
+                  echo "</table>";
+              } else {
+                  echo "<p>조회된 데이터가 없습니다. (서울에서 데이터를 입력하세요)</p>";
+              }
+              
+              mysqli_close($conn);
+          }
+          
+          echo "<p style='color:#bdc3c7;margin-top:30px;font-size:0.9em;'>Server Private IP: <b>".$_SERVER['SERVER_ADDR']."</b></p>";
+          echo "</div>";
+          echo "</body>";
+          ?>
+          EOF
+
+          # 6. SELinux 보안 컨텍스트 재적용 (파일 접근 허용)
+          chcon -R -t httpd_sys_content_t /var/www/html/
+          
+          # 7. 아파치 최종 재시작
+          systemctl restart httpd
+
+  InstCgw:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiId
+      SubnetId: !Ref SubIdc4
+      SourceDestCheck: false
+      SecurityGroupIds:
+        - !Ref SgSingIdc
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: Sing-IDC-CGW
+
+  InstSingDb:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiId
+      SubnetId: !Ref SubIdc4
+      PrivateIpAddress: 10.4.1.100
+      SecurityGroupIds:
+        - !Ref SgSingIdc
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: Sing-Slave-DB
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          echo "nameserver 8.8.8.8" > /etc/resolv.conf
+          ip link set dev ens5 mtu 1300
+          dnf update -y
+          dnf install -y mariadb105-server
+          systemctl enable --now mariadb
+
+          # DB 및 웹 접속용 유저 생성
+          mysql -u root <<EOF
+          CREATE DATABASE IF NOT EXISTS sqlDB;
+          CREATE USER 'user1'@'%' IDENTIFIED BY 'password';
+          GRANT ALL PRIVILEGES ON sqlDB.* TO 'user1'@'%';
+          FLUSH PRIVILEGES;
+          EOF
+
+  InstSingDns:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiId
+      SubnetId: !Ref SubIdc4
+      PrivateIpAddress: 10.4.1.200
+      SecurityGroupIds:
+        - !Ref SgSingIdc
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: Sing-Slave-DNS

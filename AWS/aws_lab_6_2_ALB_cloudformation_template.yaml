@@ -1,0 +1,382 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Lab6-1 Full Architecture (Two VPCs, NLB + ALB) for AWS Education Practice
+
+Parameters:
+  KeyName:
+    Description: EC2 KeyPair for SSH
+    Type: AWS::EC2::KeyPair::KeyName
+
+  LatestAmiId:
+    Description: Latest Amazon Linux
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: /aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2
+
+Resources:
+
+# -------------------------
+# VPC 1 (ELB VPC)
+# -------------------------
+
+  ELBVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: ELB-VPC
+
+  ELBIGW:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: ELB-IGW
+
+  ELBVPCGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref ELBVPC
+      InternetGatewayId: !Ref ELBIGW
+
+  ELBPublicSN1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref ELBVPC
+      CidrBlock: 10.0.0.0/24
+      AvailabilityZone: ap-northeast-2a
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: ELB-Public-SN-1
+
+  ELBPublicSN2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref ELBVPC
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: ap-northeast-2c
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: ELB-Public-SN-2
+
+  ELBPublicRT:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref ELBVPC
+      Tags:
+        - Key: Name
+          Value: ELB-Public-RT
+
+  ELBPublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: ELBVPCGatewayAttachment
+    Properties:
+      RouteTableId: !Ref ELBPublicRT
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref ELBIGW
+
+  ELBPublicSN1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref ELBPublicSN1
+      RouteTableId: !Ref ELBPublicRT
+
+  ELBPublicSN2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref ELBPublicSN2
+      RouteTableId: !Ref ELBPublicRT
+
+# -------------------------
+# Security Group
+# -------------------------
+
+  ELBSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: ELB Security Group
+      VpcId: !Ref ELBVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: ELB-SG
+
+  MySG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: My VPC SG
+      VpcId: !Ref MyVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: My-SG
+
+# -------------------------
+# EC2 Instances
+# -------------------------
+
+  ELBEC21:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiId
+      SubnetId: !Ref ELBPublicSN1
+      SecurityGroupIds:
+        - !Ref ELBSG
+      KeyName: !Ref KeyName
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          yum install -y httpd
+          systemctl start httpd
+          systemctl enable httpd
+          echo "EC2-1" > /var/www/html/index.html
+      Tags:
+        - Key: Name
+          Value: ELB-EC2-1
+
+  ELBEC22:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiId
+      SubnetId: !Ref ELBPublicSN2
+      SecurityGroupIds:
+        - !Ref ELBSG
+      KeyName: !Ref KeyName
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          yum install -y httpd
+          systemctl start httpd
+          systemctl enable httpd
+          echo "EC2-2" > /var/www/html/index.html
+      Tags:
+        - Key: Name
+          Value: ELB-EC2-2
+
+# -------------------------
+# NLB Target Group
+# -------------------------
+
+  ELBNLBTG:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      VpcId: !Ref ELBVPC
+      Port: 80
+      Protocol: TCP
+      TargetType: instance
+      Targets:
+        - Id: !Ref ELBEC21
+          Port: 80
+        - Id: !Ref ELBEC22
+          Port: 80
+
+# -------------------------
+# Network Load Balancer
+# -------------------------
+
+  ELBNLB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Type: network
+      Scheme: internet-facing
+      Subnets:
+        - !Ref ELBPublicSN1
+        - !Ref ELBPublicSN2
+      Tags:
+        - Key: Name
+          Value: ELB-NLB
+
+  ELBNLBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref ELBNLB
+      Port: 80
+      Protocol: TCP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref ELBNLBTG
+
+# -------------------------
+# VPC 2 (My VPC)
+# -------------------------
+
+  MyVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 192.168.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: My-VPC
+
+  MyIGW:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: My-IGW
+
+  MyVPCGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref MyVPC
+      InternetGatewayId: !Ref MyIGW
+
+  MyPublicSN:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref MyVPC
+      CidrBlock: 192.168.1.0/24
+      AvailabilityZone: ap-northeast-2a
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: My-Public-SN
+
+  MyPublicRT:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref MyVPC
+
+  MyPublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: MyVPCGatewayAttachment
+    Properties:
+      RouteTableId: !Ref MyPublicRT
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref MyIGW
+
+  MyPublicAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref MyPublicSN
+      RouteTableId: !Ref MyPublicRT
+
+# -------------------------
+# Test EC2 in My VPC
+# -------------------------
+
+  MyEC2:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiId
+      SubnetId: !Ref MyPublicSN
+      KeyName: !Ref KeyName
+      SecurityGroupIds:
+        - !Ref MySG
+      Tags:
+        - Key: Name
+          Value: My-EC2
+
+# -------------------------
+# ALB
+# -------------------------          
+
+  ALBTG1:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      VpcId: !Ref ELBVPC
+      Port: 80
+      Protocol: HTTP
+      TargetType: instance
+      Targets:
+        - Id: !Ref ELBEC21
+          Port: 80
+
+  ALBTG2:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      VpcId: !Ref ELBVPC
+      Port: 80
+      Protocol: HTTP
+      TargetType: instance
+      Targets:
+        - Id: !Ref ELBEC22
+          Port: 80
+
+  MyALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: My-ALB
+      Scheme: internet-facing
+      Type: application
+      SecurityGroups:
+        - !Ref ELBSG
+      Subnets:
+        - !Ref ELBPublicSN1
+        - !Ref ELBPublicSN2
+
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref MyALB
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: fixed-response
+          FixedResponseConfig:
+            StatusCode: 200
+            ContentType: text/plain
+            MessageBody: "ALB Default Page"
+
+  ALBRule1:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref ALBListener
+      Priority: 1
+      Conditions:
+        - Field: path-pattern
+          Values:
+            - /app1*
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref ALBTG1
+
+  ALBRule2:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref ALBListener
+      Priority: 2
+      Conditions:
+        - Field: path-pattern
+          Values:
+            - /app2*
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref ALBTG2
+
+Outputs:
+
+  NLBDNS:
+    Description: DNS of Network Load Balancer
+    Value: !GetAtt ELBNLB.DNSName
+
+  EC2Instance1:
+    Value: !Ref ELBEC21
+
+  EC2Instance2:
+    Value: !Ref ELBEC22
+

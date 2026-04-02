@@ -1,0 +1,173 @@
+Parameters:
+  KeyName:
+    Description: Name of existing EC2 KeyPair in Sydney
+    Type: AWS::EC2::KeyPair::KeyName
+    Default: "TEST-SYD"
+  DomainName:
+    Description: Public Domain Name for Route 53
+    Type: String
+    Default: "xhwoddl.cloud"
+  LatestAmiId:
+    Description: (DO NOT CHANGE)
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64'
+
+Resources:
+  # 1. VPC & Networking (Sydney Subnet A, C)
+  SYVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: SY-VPC
+
+  SYPublicSN1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref SYVPC
+      CidrBlock: 10.0.0.0/24
+      AvailabilityZone: ap-southeast-2a
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: SY-Public-SN-A
+
+  SYPublicSN2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref SYVPC
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: ap-southeast-2c
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: SY-Public-SN-C
+
+  SYIGW:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: SY-IGW
+
+  VPCGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref SYVPC
+      InternetGatewayId: !Ref SYIGW
+
+  SYPublicRT:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref SYVPC
+      Tags:
+        - Key: Name
+          Value: SY-Public-RT
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: VPCGatewayAttachment
+    Properties:
+      RouteTableId: !Ref SYPublicRT
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref SYIGW
+
+  RTAssociationA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SYPublicSN1
+      RouteTableId: !Ref SYPublicRT
+
+  RTAssociationC:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SYPublicSN2
+      RouteTableId: !Ref SYPublicRT
+
+  # 2. Security Group
+  WEBSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow All Traffic for Sydney Lab
+      VpcId: !Ref SYVPC
+      SecurityGroupIngress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: SY-WEB-SG
+
+  # 3. Application Load Balancer (Sydney)
+  SYALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    DependsOn: VPCGatewayAttachment
+    Properties:
+      Name: SY-ALB
+      Subnets:
+        - !Ref SYPublicSN1
+        - !Ref SYPublicSN2
+      SecurityGroups:
+        - !Ref WEBSG
+      Type: application
+
+  ALBTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      VpcId: !Ref SYVPC
+      Port: 80
+      Protocol: HTTP
+      TargetType: instance
+      HealthCheckPath: /
+      HealthCheckIntervalSeconds: 30
+
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref ALBTargetGroup
+      LoadBalancerArn: !Ref SYALB
+      Port: 80
+      Protocol: HTTP
+
+  # 4. Launch Template & ASG (Sydney)
+  SYLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: SY-Launch-Template
+      LaunchTemplateData:
+        ImageId: !Ref LatestAmiId
+        InstanceType: t3.micro
+        KeyName: !Ref KeyName
+        SecurityGroupIds:
+          - !Ref WEBSG
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            dnf install -y nginx
+            TOKEN=$(curl -sS -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+            RZAZ=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/availability-zone-id)
+            IID=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
+            LIP=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/local-ipv4)
+            wget -P /usr/share/nginx/html/ https://cloudneta.github.io/test.jpg
+            echo "<head><link rel='icon' href='data:;base64,iVBORw0KGgo='></head><h1>Sydney RegionAz($RZAZ) : Instance ID($IID) : Private IP($LIP) : ALB ASG Web</h1><img src='test.jpg'>" > /usr/share/nginx/html/index.html
+            systemctl start nginx
+            systemctl enable nginx
+
+  SYASG:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      VPCZoneIdentifier:
+        - !Ref SYPublicSN1
+        - !Ref SYPublicSN2
+      LaunchTemplate:
+        LaunchTemplateId: !Ref SYLaunchTemplate
+        Version: !GetAtt SYLaunchTemplate.LatestVersionNumber
+      MinSize: '1'
+      MaxSize: '4'
+      DesiredCapacity: '2'
+      TargetGroupARNs:
+        - !Ref ALBTargetGroup

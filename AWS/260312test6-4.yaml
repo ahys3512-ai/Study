@@ -1,0 +1,235 @@
+Parameters:
+  KeyName:
+    Description: Name of existing EC2 KeyPair
+    Type: AWS::EC2::KeyPair::KeyName
+    Default: "TEST_SA"
+  DomainName:
+    Description: Public Domain Name for Route 53
+    Type: String
+    Default: "xhwoddl.cloud"
+  LatestAmiId:
+    Description: (DO NOT CHANGE)
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64'
+
+Resources:
+  # 1. VPC & Networking (Subnet A, C)
+  SAVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: SA-VPC
+
+  SAPublicSN1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref SAVPC
+      CidrBlock: 10.0.0.0/24
+      AvailabilityZone: sa-east-1a
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: SA-Public-SN-A
+
+  SAPublicSN2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref SAVPC
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: sa-east-1c
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: SA-Public-SN-C
+
+  SAIGW:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: SA-1GW
+
+  VPCGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref SAVPC
+      InternetGatewayId: !Ref SAIGW
+
+  SAPublicRT:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref SAVPC
+      Tags:
+        - Key: Name
+          Value: SA-Public-RT
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: VPCGatewayAttachment
+    Properties:
+      RouteTableId: !Ref SAPublicRT
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref SAIGW
+
+  RTAssociationA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SAPublicSN1
+      RouteTableId: !Ref SAPublicRT
+
+  RTAssociationC:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SAPublicSN2
+      RouteTableId: !Ref SAPublicRT
+
+  # 2. Security Group (Allow All for Lab)
+  WEBSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow All Traffic for Lab
+      VpcId: !Ref SAVPC
+      SecurityGroupIngress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: WEB-SG
+
+  # 3. Application Load Balancer
+  SAALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    DependsOn: VPCGatewayAttachment # IGW 연결 확인 후 생성
+    Properties:
+      Name: SA-ALB
+      Subnets:
+        - !Ref SAPublicSN1
+        - !Ref SAPublicSN2
+      SecurityGroups:
+        - !Ref WEBSG
+      Type: application
+
+  ALBTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      VpcId: !Ref SAVPC
+      Port: 80
+      Protocol: HTTP
+      TargetType: instance
+      HealthCheckPath: /
+      HealthCheckIntervalSeconds: 30
+
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref ALBTargetGroup
+      LoadBalancerArn: !Ref SAALB
+      Port: 80
+      Protocol: HTTP
+
+  # 4. Launch Template & ASG
+  SALaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: SA-Launch-Template
+      LaunchTemplateData:
+        ImageId: !Ref LatestAmiId
+        InstanceType: t3.micro
+        KeyName: !Ref KeyName
+        SecurityGroupIds:
+          - !Ref WEBSG
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            dnf install -y nginx
+            TOKEN=$(curl -sS -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+            RZAZ=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/availability-zone-id)
+            IID=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
+            LIP=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/local-ipv4)
+            wget -P /usr/share/nginx/html/ https://cloudneta.github.io/test.jpg
+            echo "<head><link rel='icon' href='data:;base64,iVBORw0KGgo='></head><h1>RegionAz($RZAZ) : Instance ID($IID) : Private IP($LIP) : ALB ASG Web</h1><img src='test.jpg'>" > /usr/share/nginx/html/index.html
+            systemctl start nginx
+            systemctl enable nginx
+
+  SAASG:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      VPCZoneIdentifier:
+        - !Ref SAPublicSN1
+        - !Ref SAPublicSN2
+      LaunchTemplate:
+        LaunchTemplateId: !Ref SALaunchTemplate
+        Version: !GetAtt SALaunchTemplate.LatestVersionNumber
+      MinSize: '1'
+      MaxSize: '4'
+      DesiredCapacity: '2'
+      TargetGroupARNs:
+        - !Ref ALBTargetGroup
+
+  # 5. Route 53 Public Hosted Zone
+  PublicHostedZone:
+    Type: AWS::Route53::HostedZone
+    Properties:
+      Name: !Sub "${DomainName}."
+
+  # 6. CloudFront Distribution
+  CloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Origins:
+          - Id: ALBOrigin
+            DomainName: !GetAtt SAALB.DNSName
+            CustomOriginConfig:
+              OriginProtocolPolicy: http-only
+        DefaultCacheBehavior:
+          TargetOriginId: ALBOrigin
+          ForwardedValues:
+            QueryString: false
+            Cookies:
+              Forward: none
+          ViewerProtocolPolicy: allow-all
+        Comment: "CloudFront for SA-ALB"
+
+  # 7. Route 53 A Record (Domain -> ALB)
+  ALBRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref PublicHostedZone
+      Name: !Sub "${DomainName}."
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt SAALB.DNSName
+        HostedZoneId: !GetAtt SAALB.CanonicalHostedZoneID
+
+  # www를 붙여도 접속되게 하는 레코드
+  WWWRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref PublicHostedZone
+      Name: !Sub "www.${DomainName}."
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt SAALB.DNSName
+        HostedZoneId: !GetAtt SAALB.CanonicalHostedZoneID
+
+# 호스팅영역을 살려둔채로 자주 바뀌는 alb ec2 등 만 올리고 불필요하게 도메인 교체 안하기위해 아래코드 사용
+# 5번 항목(HostedZone 생성)은 삭제하고, 
+# 7번 항목(RecordSet)에서 HostedZoneId를 직접 적어주거나
+# ImportValue 등을 사용하면 됩니다.
+  # ALBRecord:
+  #   Type: AWS::Route53::RecordSet
+  #   Properties:
+  #     HostedZoneId: "Z0123456789ABCDEFGHI" # 현재 살아있는 호스팅 영역 ID 입력
+  #     Name: !Sub "${DomainName}."
+  #     Type: A
+  #     AliasTarget:
+  #       DNSName: !GetAtt SAALB.DNSName
+  #       HostedZoneId: !GetAtt SAALB.CanonicalHostedZoneID

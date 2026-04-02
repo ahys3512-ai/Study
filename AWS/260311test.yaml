@@ -1,0 +1,256 @@
+Parameters:
+  KeyName:
+    Description: Name of existing EC2 KeyPair
+    Type: AWS::EC2::KeyPair::KeyName
+  LatestAmiId:
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64'
+  DomainName:
+    Type: String
+    Default: 'xhwoddl.cloud'
+    Description: Register this domain in Route 53
+
+Resources:
+  # --- [1] 네트워크 구성 ---
+  MyVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      CidrBlock: 10.0.0.0/16
+      Tags: [{Key: Name, Value: My-VPC}]
+
+  MyPublicSN1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref MyVPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      CidrBlock: 10.0.0.0/24
+      MapPublicIpOnLaunch: true
+      Tags: [{Key: Name, Value: My-Public-SN-1}]
+
+  MyPublicSN2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref MyVPC
+      AvailabilityZone: !Select [ 2, !GetAZs '' ]
+      CidrBlock: 10.0.1.0/24
+      MapPublicIpOnLaunch: true
+      Tags: [{Key: Name, Value: My-Public-SN-2}]
+
+  MyIGW:
+    Type: AWS::EC2::InternetGateway
+  MyIGWAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref MyIGW
+      VpcId: !Ref MyVPC
+
+  MyPublicRT:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref MyVPC
+  DefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: MyIGWAttachment
+    Properties:
+      RouteTableId: !Ref MyPublicRT
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref MyIGW
+  MyPublicSN1Assoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref MyPublicRT
+      SubnetId: !Ref MyPublicSN1
+  MyPublicSN2Assoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref MyPublicRT
+      SubnetId: !Ref MyPublicSN2
+
+  # --- [2] 보안 그룹 ---
+  ALBSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow HTTP from everywhere
+      VpcId: !Ref MyVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+
+  WEBSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow HTTP from ALB and SSH
+      VpcId: !Ref MyVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupId: !Ref ALBSG
+        - IpProtocol: tcp # 추가: Route 53 헬스체크를 위해 80포트 외부 개방
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0  
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+
+  # --- [3] EC2 인스턴스 (고정 2대) ---
+  EC21:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiId
+      KeyName: !Ref KeyName
+      SubnetId: !Ref MyPublicSN1
+      SecurityGroupIds: [!Ref WEBSG]
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          dnf install -y httpd
+          systemctl start httpd
+          systemctl enable httpd
+          echo "<h1>Welcome to EC2-1</h1>" > /var/www/html/index.html
+
+  EC22:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiId
+      KeyName: !Ref KeyName
+      SubnetId: !Ref MyPublicSN2
+      SecurityGroupIds: [!Ref WEBSG]
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          dnf install -y httpd
+          systemctl start httpd
+          systemctl enable httpd
+          echo "<h1>Welcome to EC2-2</h1>" > /var/www/html/index.html
+
+  # --- [4] ALB 구성 ---
+  MyALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Subnets: [!Ref MyPublicSN1, !Ref MyPublicSN2]
+      SecurityGroups: [!Ref ALBSG]
+
+  MyTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      VpcId: !Ref MyVPC
+      Port: 80
+      Protocol: HTTP
+      TargetType: instance
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: '60' # 업데이트 시 기존 연결을 60초간 유지한 뒤 연결 해제 (Connection Draining)
+      HealthCheckPath: /index.html
+      Targets:
+        - Id: !Ref EC21
+        - Id: !Ref EC22
+
+  MyListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref MyALB
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref MyTargetGroup
+
+  # --- [5] 비상용 점검 페이지 (S3 버킷) ---
+  # --- [5-0] Route 53 호스팅 영역 (누락 방지) ---
+  MyHostedZone:
+    Type: AWS::Route53::HostedZone
+    Properties:
+      Name: !Ref DomainName
+
+  # --- [5] 비상용 점검 페이지 (S3 버킷) ---
+  SorryPageBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      # 도메인 이름을 포함하여 이름 중복 방지
+      BucketName: !Sub "backup-${DomainName}-${AWS::AccountId}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+      WebsiteConfiguration:
+        IndexDocument: index.html
+
+  # (나머지 BackupBucketPolicy, ALBHealthCheck, RecordSet 코드는 그대로 유지)
+
+  # S3 버킷에 누구나 접속할 수 있도록 권한 부여
+  BackupBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref SorryPageBucket
+      PolicyDocument:
+        Statement:
+          - Sid: PublicReadForGetBucketObjects
+            Effect: Allow
+            Principal: '*'
+            Action: 's3:GetObject'
+            Resource: !Sub "arn:aws:s3:::${SorryPageBucket}/*"
+
+  # --- [6] Route 53 헬스체크 (ALB 감시) ---
+  # 이제 개별 EC2가 아니라 'ALB' 전체의 건강 상태를 감시합니다.
+  ALBHealthCheck:
+    Type: AWS::Route53::HealthCheck
+    Properties:
+      HealthCheckConfig:
+        FullyQualifiedDomainName: !GetAtt MyALB.DNSName
+        Type: HTTP
+        Port: 80
+        ResourcePath: /index.html
+        RequestInterval: 30
+        FailureThreshold: 3
+
+  # --- [7] 장애 조치 레코드 (DNS 스위치) ---
+  # 1. 기본 레코드: 평상시 ALB로 연결
+  PrimaryDNSRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref MyHostedZone
+      Name: !Sub "www.${DomainName}."
+      Type: A
+      SetIdentifier: "Primary-ALB"
+      Failover: PRIMARY
+      HealthCheckId: !Ref ALBHealthCheck
+      AliasTarget:
+        DNSName: !GetAtt MyALB.DNSName
+        # CanonicalHostedZoneID를 사용하여 동적으로 가져옵니다.
+        HostedZoneId: !GetAtt MyALB.CanonicalHostedZoneID
+
+  # 2. 보조 레코드: 비상시 S3 점검 페이지로 연결
+  SecondaryDNSRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref MyHostedZone
+      Name: !Sub "www.${DomainName}."
+      Type: A
+      SetIdentifier: "Secondary-S3"
+      Failover: SECONDARY
+      AliasTarget:
+        # 서울 리전 S3 웹사이트 엔드포인트용 정확한 Zone ID: Z3AQEAD5AJ9S6B
+        # 만약 리전이 다르다면 해당 리전용 ID로 바꿔야 합니다.
+        HostedZoneId: Z3AQEAD5AJ9S6B 
+        DNSName: !Sub "s3-website-${AWS::Region}.amazonaws.com"
+
+Outputs:
+  ALBURL:
+    Description: Direct ALB URL
+    Value: !Sub "http://${MyALB.DNSName}"
+  DomainURL:
+    Description: Your Domain URL
+    Value: !Sub "http://www.${DomainName}"
+  NameServers:
+    Description: Use these 4 NS values in Gabia
+    Value: !Join [", ", !GetAtt MyHostedZone.NameServers]

@@ -1,0 +1,624 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Seoul Full Infra - High Availability with ALB, TGW, and DNS
+
+Parameters:
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Default: EC2-test
+
+Resources:
+  # --- [1] VPCs ---
+  VpcCloud:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.1.0.0/16
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: Seoul-Cloud-VPC
+
+  VpcIdc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.2.0.0/16
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: Seoul-IDC-VPC
+
+  # --- [2] Subnets (Cloud) ---
+  SubPub1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VpcCloud
+      CidrBlock: 10.1.1.0/24
+      AvailabilityZone: !Sub "${AWS::Region}a"
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: Cloud-Pub-1
+
+  SubPub2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VpcCloud
+      CidrBlock: 10.1.2.0/24
+      AvailabilityZone: !Sub "${AWS::Region}c"
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: Cloud-Pub-2
+
+  SubPriv1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VpcCloud
+      CidrBlock: 10.1.3.0/24
+      AvailabilityZone: !Sub "${AWS::Region}a"
+      Tags:
+        - Key: Name
+          Value: Cloud-Priv-1
+
+  SubPriv2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VpcCloud
+      CidrBlock: 10.1.4.0/24
+      AvailabilityZone: !Sub "${AWS::Region}c"
+      Tags:
+        - Key: Name
+          Value: Cloud-Priv-2
+
+  SubIdc:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VpcIdc
+      CidrBlock: 10.2.1.0/24
+      AvailabilityZone: !Sub "${AWS::Region}a"
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: IDC-Subnet
+
+  # --- [3] Gateways & NAT ---
+  Igw:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: Cloud-IGW
+
+  AttachIgw:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VpcCloud
+      InternetGatewayId: !Ref Igw
+
+  EipNat1:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  NatGw1:
+    Type: AWS::EC2::NatGateway
+    DependsOn: AttachIgw # IGW가 활성화된 후 NAT 생성 권장
+    Properties:
+      AllocationId: !GetAtt EipNat1.AllocationId
+      SubnetId: !Ref SubPub1
+      Tags:
+        - Key: Name
+          Value: Cloud-NAT-GW-A
+
+  EipNat2:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  NatGw2:
+    Type: AWS::EC2::NatGateway
+    DependsOn: AttachIgw
+    Properties:
+      AllocationId: !GetAtt EipNat2.AllocationId
+      SubnetId: !Ref SubPub2
+      Tags:
+        - Key: Name
+          Value: Cloud-NAT-GW-C
+
+  IgwIdc:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: IDC-IGW
+
+  AttachIgwIdc:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VpcIdc
+      InternetGatewayId: !Ref IgwIdc
+
+  # --- [4] Transit Gateway (TGW) ---
+  SeoulTgw:
+    Type: AWS::EC2::TransitGateway
+    Properties:
+      Description: Connect Cloud and IDC VPCs
+      # 아래 두 줄을 추가해서 자동 연결/전파를 끕니다.
+      DefaultRouteTableAssociation: disable
+      DefaultRouteTablePropagation: disable
+      Tags:
+        - Key: Name
+          Value: Seoul-TGW
+
+  CloudAttach:
+    Type: AWS::EC2::TransitGatewayAttachment
+    Properties:
+      VpcId: !Ref VpcCloud
+      SubnetIds:
+        - !Ref SubPriv1
+        - !Ref SubPriv2
+      TransitGatewayId: !Ref SeoulTgw
+
+  IdcAttach:
+    Type: AWS::EC2::TransitGatewayAttachment
+    Properties:
+      VpcId: !Ref VpcIdc
+      SubnetIds:
+        - !Ref SubIdc
+      TransitGatewayId: !Ref SeoulTgw
+
+# --- [5] Route Tables & Routes (최종 확정본) ---
+  RtPub:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VpcCloud
+      Tags:
+        - Key: Name
+          Value: RT-Cloud-Pub
+
+  RtPriv1:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VpcCloud
+      Tags:
+        - Key: Name
+          Value: RT-Cloud-Priv-1-AZa
+
+  RtPriv2:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VpcCloud
+      Tags:
+        - Key: Name
+          Value: RT-Cloud-Priv-2-AZc
+
+  RtIdc:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VpcIdc
+      Tags:
+        - Key: Name
+          Value: RT-IDC
+
+  # [Public Subnet] 인터넷 직접 연결
+  RoutePubDefault:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref RtPub
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref Igw
+
+  RoutePubToIdc:
+    Type: AWS::EC2::Route
+    DependsOn: CloudAttach
+    Properties:
+      RouteTableId: !Ref RtPub
+      DestinationCidrBlock: 10.2.0.0/16
+      TransitGatewayId: !Ref SeoulTgw
+
+  # [Private Subnet 1] 
+  RoutePriv1Internet:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref RtPriv1
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGw1
+
+  RoutePriv1ToTgw: # 10.x.x.x 대역(IDC, 싱가포르) 모두 TGW로 통합
+    Type: AWS::EC2::Route
+    DependsOn: CloudAttach
+    Properties:
+      RouteTableId: !Ref RtPriv1
+      DestinationCidrBlock: 10.0.0.0/8
+      TransitGatewayId: !Ref SeoulTgw
+
+  # [Private Subnet 2]
+  RoutePriv2Internet:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref RtPriv2
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGw2
+
+  RoutePriv2ToTgw: # 10.x.x.x 대역 모두 TGW로 통합
+    Type: AWS::EC2::Route
+    DependsOn: CloudAttach
+    Properties:
+      RouteTableId: !Ref RtPriv2
+      DestinationCidrBlock: 10.0.0.0/8
+      TransitGatewayId: !Ref SeoulTgw
+
+  # [IDC Subnet] 모든 트래픽을 TGW로 던짐 (보안 정석)
+  RouteIdcAllToTgw:
+    Type: AWS::EC2::Route
+    DependsOn: IdcAttach
+    Properties:
+      RouteTableId: !Ref RtIdc
+      DestinationCidrBlock: 10.0.0.0/8 # 내부망 통신
+      TransitGatewayId: !Ref SeoulTgw
+
+  RouteIdcInternetToTgw:
+    Type: AWS::EC2::Route
+    DependsOn: IdcAttach
+    Properties:
+      RouteTableId: !Ref RtIdc
+      DestinationCidrBlock: 0.0.0.0/0 # IDC 인터넷 -> TGW -> VPC NAT 경로
+      TransitGatewayId: !Ref SeoulTgw
+
+  # 서울 TGW 전용 라우팅 테이블 생성
+  SeoulTgwRouteTable:
+    Type: AWS::EC2::TransitGatewayRouteTable
+    Properties:
+      TransitGatewayId: !Ref SeoulTgw
+      Tags:
+        - Key: Name
+          Value: Seoul-TGW-RT
+
+# 서울 VPC(10.1)로 가는 길 (VPC Attachment 연결)
+  RouteToSeoulVpc:
+    Type: AWS::EC2::TransitGatewayRoute
+    Properties:
+      DestinationCidrBlock: 10.1.0.0/16
+      TransitGatewayAttachmentId: !Ref CloudAttach
+      TransitGatewayRouteTableId: !Ref SeoulTgwRouteTable
+
+# 서울 IDC(10.2)로 가는 길 (IDC Attachment 연결)
+  RouteToSeoulIdc:
+    Type: AWS::EC2::TransitGatewayRoute
+    Properties:
+      DestinationCidrBlock: 10.2.0.0/16
+      TransitGatewayAttachmentId: !Ref IdcAttach
+      TransitGatewayRouteTableId: !Ref SeoulTgwRouteTable
+
+# [중요] IDC의 인터넷(0.0.0.0/0)을 VPC NAT로 보내는 길
+  RouteIdcInternetToVpc:
+    Type: AWS::EC2::TransitGatewayRoute
+    Properties:
+      DestinationCidrBlock: 0.0.0.0/0
+      TransitGatewayAttachmentId: !Ref CloudAttach
+      TransitGatewayRouteTableId: !Ref SeoulTgwRouteTable
+
+  # Cloud VPC를 TGW 라우팅 테이블에 연결
+  CloudAttachAssoc:
+    Type: AWS::EC2::TransitGatewayRouteTableAssociation
+    Properties:
+      TransitGatewayAttachmentId: !Ref CloudAttach
+      TransitGatewayRouteTableId: !Ref SeoulTgwRouteTable
+
+  # IDC VPC를 TGW 라우팅 테이블에 연결
+  IdcAttachAssoc:
+    Type: AWS::EC2::TransitGatewayRouteTableAssociation
+    Properties:
+      TransitGatewayAttachmentId: !Ref IdcAttach
+      TransitGatewayRouteTableId: !Ref SeoulTgwRouteTable
+
+  # Cloud VPC 전파
+  CloudAttachProp:
+    Type: AWS::EC2::TransitGatewayRouteTablePropagation
+    Properties:
+      TransitGatewayAttachmentId: !Ref CloudAttach
+      TransitGatewayRouteTableId: !Ref SeoulTgwRouteTable
+
+  # IDC VPC 전파
+  IdcAttachProp:
+    Type: AWS::EC2::TransitGatewayRouteTablePropagation
+    Properties:
+      TransitGatewayAttachmentId: !Ref IdcAttach
+      TransitGatewayRouteTableId: !Ref SeoulTgwRouteTable
+
+  # --- [6] Associations ---
+  AssocPub1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SubPub1
+      RouteTableId: !Ref RtPub
+  AssocPub2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SubPub2
+      RouteTableId: !Ref RtPub
+  AssocPriv1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SubPriv1
+      RouteTableId: !Ref RtPriv1
+  AssocPriv2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SubPriv2
+      RouteTableId: !Ref RtPriv2
+  AssocIdc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SubIdc
+      RouteTableId: !Ref RtIdc
+
+  # --- [7] Security Groups ---
+  SgCloud:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow HTTP and Internal Traffic
+      VpcId: !Ref VpcCloud
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp  # SSH 추가
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0 # 혹은 10.0.0.0/8
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+
+  SgIdc:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow All Traffic for IDC
+      VpcId: !Ref VpcIdc
+      SecurityGroupIngress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+
+  # --- [8] Load Balancer (ALB) ---
+  SeoulAlb:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer  # 수정됨
+    Properties:
+      Scheme: internet-facing
+      Subnets:
+        - !Ref SubPub1
+        - !Ref SubPub2
+      SecurityGroups:
+        - !Ref SgCloud
+      Tags:
+        - Key: Name
+          Value: Seoul-ALB
+
+  AlbTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup   # 수정됨
+    DependsOn: [InstWeb1, InstWeb2] # 인스턴스가 먼저 생겨야 타겟으로 등록 가능
+    Properties:
+      VpcId: !Ref VpcCloud
+      Port: 80
+      Protocol: HTTP
+      TargetType: instance
+      Targets:
+        - Id: !Ref InstWeb1
+        - Id: !Ref InstWeb2
+
+  AlbListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener      # 수정됨
+    Properties:
+      LoadBalancerArn: !Ref SeoulAlb
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref AlbTargetGroup
+
+  # --- [9] Instances ---
+  InstWeb1:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiId
+      SubnetId: !Ref SubPriv1
+      PrivateIpAddress: 10.1.3.100
+      SecurityGroupIds:
+        - !Ref SgCloud
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: Seoul-Web-1
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          # 1. 패키지 설치
+          dnf update -y
+          dnf install -y httpd php php-mysqli php-fpm
+          
+          # 2. 서비스 시작 및 자동실행 (확실하게 start 추가)
+          systemctl start httpd php-fpm
+          systemctl enable httpd php-fpm
+          
+          # 3. [중요] SELinux가 PHP의 외부 DB 접속을 차단하지 않도록 설정
+          setsebool -P httpd_can_network_connect 1
+          
+          # 4. 파일 권한 설정
+          chown -R ec2-user:apache /var/www/html
+          chmod -R 775 /var/www/html
+          
+          # 5. PHP 파일 생성
+          cat <<'EOF' > /var/www/html/index.php
+          <?php
+          $host="10.2.1.100";
+          $user="user1";
+          $pw="password";
+          $db="sqlDB";
+          $conn=mysqli_connect($host,$user,$pw,$db);
+          echo "<body style='text-align:center;padding-top:50px;font-family:sans-serif;'>";
+          if(!$conn){
+            echo "<h1 style='color:#e74c3c;'>서울 Web: Master DB 접속 실패... 😢</h1>";
+            echo "<p>".mysqli_connect_error()."</p>";
+          }else{
+            echo "<h1 style='color:#2ecc71;'>서울 본사 서버: Master DB 연동 성공! 🚀</h1>";
+            $result=mysqli_query($conn,"SELECT * FROM userTBL ORDER BY id DESC");
+            echo "<div style='display:inline-block;border:2px solid #ddd;padding:20px;border-radius:10px;background-color:#f9f9f9;'>";
+            while($row = mysqli_fetch_assoc($result)) {
+                echo "<div style='border-bottom:1px solid #eee; margin-bottom:10px;'>";
+                echo "<h3>👤 이름: ".$row['name']."</h3>";
+                echo "<h3>📧 이메일: ".$row['email']."</h3>";
+                echo "</div>";
+            }
+            echo "</div>";
+            echo "<p style='color:#7f8c8d;margin-top:20px;'>현재 서버 IP: <b>".$_SERVER['SERVER_ADDR']."</b></p>";
+          }
+          echo "</body>";
+          ?>
+          EOF
+          
+          # 6. 보안 컨텍스트 적용
+          chcon -R -t httpd_sys_content_t /var/www/html/
+         
+
+  InstWeb2:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiId
+      SubnetId: !Ref SubPriv2
+      PrivateIpAddress: 10.1.4.100
+      SecurityGroupIds:
+        - !Ref SgCloud
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: Seoul-Web-2
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          # 1. 패키지 설치
+          dnf update -y
+          dnf install -y httpd php php-mysqli php-fpm
+          
+          # 2. 서비스 시작 및 자동실행 (확실하게 start 추가)
+          systemctl start httpd php-fpm
+          systemctl enable httpd php-fpm
+          
+          # 3. [중요] SELinux가 PHP의 외부 DB 접속을 차단하지 않도록 설정
+          setsebool -P httpd_can_network_connect 1
+          
+          # 4. 파일 권한 설정
+          chown -R ec2-user:apache /var/www/html
+          chmod -R 775 /var/www/html
+          
+          # 5. PHP 파일 생성
+          cat <<'EOF' > /var/www/html/index.php
+          <?php
+          $host="10.2.1.100";
+          $user="user1";
+          $pw="password";
+          $db="sqlDB";
+          $conn=mysqli_connect($host,$user,$pw,$db);
+          echo "<body style='text-align:center;padding-top:50px;font-family:sans-serif;'>";
+          if(!$conn){
+            echo "<h1 style='color:#e74c3c;'>서울 Web: Master DB 접속 실패... 😢</h1>";
+            echo "<p>".mysqli_connect_error()."</p>";
+          }else{
+            echo "<h1 style='color:#2ecc71;'>서울 본사 서버: Master DB 연동 성공! 🚀</h1>";
+            $result=mysqli_query($conn,"SELECT * FROM userTBL ORDER BY id DESC");
+            echo "<div style='display:inline-block;border:2px solid #ddd;padding:20px;border-radius:10px;background-color:#f9f9f9;'>";
+            while($row = mysqli_fetch_assoc($result)) {
+                echo "<div style='border-bottom:1px solid #eee; margin-bottom:10px;'>";
+                echo "<h3>👤 이름: ".$row['name']."</h3>";
+                echo "<h3>📧 이메일: ".$row['email']."</h3>";
+                echo "</div>";
+            }
+            echo "</div>";
+            echo "<p style='color:#7f8c8d;margin-top:20px;'>현재 서버 IP: <b>".$_SERVER['SERVER_ADDR']."</b></p>";
+          }
+          echo "</body>";
+          ?>
+          EOF
+          
+          # 6. 보안 컨텍스트 적용
+          chcon -R -t httpd_sys_content_t /var/www/html/
+
+  InstIdcDNS:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiId
+      SubnetId: !Ref SubIdc
+      PrivateIpAddress: 10.2.1.200  # <--- DNS 서버 IP 고정
+      SecurityGroupIds:
+        - !Ref SgIdc
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: IDC-DNS-Bind9
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          dnf update -y
+          dnf install -y bind bind-utils
+          systemctl start named
+          systemctl enable named
+
+  InstIdcDB:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiId
+      SubnetId: !Ref SubIdc
+      PrivateIpAddress: 10.2.1.100  # <--- 마스터 DB IP 고정
+      SecurityGroupIds:
+        - !Ref SgIdc
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: IDC-Master-DB
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          # 1. 패키지 업데이트 및 MariaDB 설치
+          dnf update -y
+          dnf install -y mariadb105-server
+          
+          # 2. MariaDB 시작 및 자동 실행 설정
+          systemctl enable --now mariadb
+          
+          # 3. 초기 DB/Table/User 설정 (SQL 실행)
+          # - sqlDB 생성
+          # - userTBL 생성 및 샘플 데이터 삽입
+          # - user1 계정 생성 및 모든 대역(%) 접속 권한 부여
+          mysql -u root <<EOF
+          CREATE DATABASE IF NOT EXISTS sqlDB;
+          USE sqlDB;
+          CREATE TABLE IF NOT EXISTS userTBL (
+              id INT AUTO_INCREMENT PRIMARY KEY,
+              name VARCHAR(20),
+              email VARCHAR(50)
+          );
+          INSERT INTO userTBL (name, email) VALUES ('Administrator', 'admin@seoul.com');
+          
+          CREATE USER 'user1'@'%' IDENTIFIED BY 'password';
+          GRANT ALL PRIVILEGES ON sqlDB.* TO 'user1'@'%';
+          FLUSH PRIVILEGES;
+          EOF
+
+  InstSeoulCgw:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiId
+      SubnetId: !Ref SubIdc
+      SourceDestCheck: false  # 라우팅 장비 역할을 하려면 필수
+      SecurityGroupIds:
+        - !Ref SgIdc
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: Seoul-IDC-CGW

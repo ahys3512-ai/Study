@@ -1,0 +1,11 @@
+  MyInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: ami-0389ea382ca31bd7f
+      InstanceType: t3.micro
+      KeyName: !Ref KeyName
+      Tags:
+         - Key: Name
+           Value: MyInstance
+      SecurityGroups:
+         - !Ref MySG

@@ -1,0 +1,370 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: TGW Lab - AZ Separation & Dedicated TGW Subnets (Total 5 Instances)
+
+Parameters:
+  LatestAmiId:
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64'
+  KeyName:
+    Type: 'AWS::EC2::KeyPair::KeyName'
+    Description: Name of an existing EC2 KeyPair
+    Default: EC2-test
+
+Resources:
+  # 1. Transit Gateway
+  MyTGW:
+    Type: AWS::EC2::TransitGateway
+    Properties:
+      AutoAcceptSharedAttachments: enable
+      DefaultRouteTableAssociation: enable
+      DefaultRouteTablePropagation: enable
+      Tags:
+        - Key: Name
+          Value: My-Lab-TGW
+
+  # --- VPC 0 (Mgmt VPC) ---
+  VPC0:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: VPC0
+
+  Subnet0: # 인스턴스 배치 + TGW 연동 (VPC0은 소규모라 통합)
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC0
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: !Sub "${AWS::Region}a"
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: VPC0-Sub1
+
+  IGW0:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: IGW-VPC0
+
+  AttachIGW0:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC0
+      InternetGatewayId: !Ref IGW0
+
+  RT0:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC0
+      Tags:
+        - Key: Name
+          Value: RT-VPC0
+
+  Route0toTGW:
+    Type: AWS::EC2::Route
+    DependsOn: AttachVPC0
+    Properties:
+      RouteTableId: !Ref RT0
+      DestinationCidrBlock: 10.0.0.0/8
+      TransitGatewayId: !Ref MyTGW
+
+  Route0toIGW:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref RT0
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref IGW0
+
+  RTAssoc0:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref RT0
+      SubnetId: !Ref Subnet0
+
+  SG0:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow All Traffic
+      VpcId: !Ref VPC0
+      SecurityGroupIngress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+
+  InstVPC0:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiId
+      SubnetId: !Ref Subnet0
+      SecurityGroupIds:
+        - !Ref SG0
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: VPC0-Inst1
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          hostnamectl --static set-hostname VPC0Instance1
+          dnf install -y tcpdump squid httpd
+          cat <<EOT > /etc/squid/squid.conf
+          visible_hostname squid-proxy
+          http_port 3128
+          acl my_network src 10.0.0.0/8
+          http_access allow my_network
+          http_access allow localhost
+          http_access deny all
+          EOT
+          systemctl start squid
+          systemctl enable squid
+          echo "<h1>TGW Lab - MgMt Server1</h1>" > /var/www/html/index.html
+          systemctl start httpd
+          systemctl enable httpd
+          cat <<EOT > /home/ec2-user/list.txt
+          10.0.1.10
+          10.10.1.10
+          10.10.2.10
+          10.20.1.10
+          10.20.2.10
+          EOT
+          curl -o /home/ec2-user/pingall.sh https://cloudneta-book.s3.ap-northeast-2.amazonaws.com/chapter6/pingall.sh --silent
+          chmod +x /home/ec2-user/pingall.sh
+          chown ec2-user:ec2-user /home/ec2-user/list.txt /home/ec2-user/pingall.sh
+
+  # --- VPC 1 (Private VPC) ---
+  VPC1:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.10.0.0/16
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: VPC1
+
+  # 인스턴스용 서브넷
+  Subnet1a:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC1
+      CidrBlock: 10.10.1.0/24
+      AvailabilityZone: !Sub "${AWS::Region}a"
+      Tags:
+        - Key: Name
+          Value: VPC1-Sub1-Inst
+  Subnet1b:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC1
+      CidrBlock: 10.10.2.0/24
+      AvailabilityZone: !Sub "${AWS::Region}b"
+      Tags:
+        - Key: Name
+          Value: VPC1-Sub2-Inst
+
+  # TGW 연동 전용 서브넷 (AZ 분리)
+  TGWSubnet1a:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC1
+      CidrBlock: 10.10.10.0/24
+      AvailabilityZone: !Sub "${AWS::Region}a"
+      Tags:
+        - Key: Name
+          Value: VPC1-TGW-Sub-a
+  TGWSubnet1b:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC1
+      CidrBlock: 10.10.11.0/24
+      AvailabilityZone: !Sub "${AWS::Region}b"
+      Tags:
+        - Key: Name
+          Value: VPC1-TGW-Sub-b
+
+  RT1:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC1
+      Tags:
+        - Key: Name
+          Value: RT-VPC1
+
+  Route1toTGW:
+    Type: AWS::EC2::Route
+    DependsOn: AttachVPC1
+    Properties:
+      RouteTableId: !Ref RT1
+      DestinationCidrBlock: 10.0.0.0/8
+      TransitGatewayId: !Ref MyTGW
+
+  RTAssoc1a:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref RT1
+      SubnetId: !Ref Subnet1a
+  RTAssoc1b:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref RT1
+      SubnetId: !Ref Subnet1b
+  RTAssoc1TGWa:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref RT1
+      SubnetId: !Ref TGWSubnet1a
+  RTAssoc1TGWb:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref RT1
+      SubnetId: !Ref TGWSubnet1b
+
+  SG1:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow All Traffic
+      VpcId: !Ref VPC1
+      SecurityGroupIngress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+
+  InstVPC1a:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiId
+      SubnetId: !Ref Subnet1a
+      SecurityGroupIds: [!Ref SG1]
+      KeyName: !Ref KeyName
+      Tags: [{Key: Name, Value: VPC1-Inst1}]
+
+  InstVPC1b:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiId
+      SubnetId: !Ref Subnet1b
+      SecurityGroupIds: [!Ref SG1]
+      KeyName: !Ref KeyName
+      Tags: [{Key: Name, Value: VPC1-Inst2}]
+
+  # --- VPC 2 (Private VPC) ---
+  VPC2:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.20.0.0/16
+      EnableDnsHostnames: true
+      Tags: [{Key: Name, Value: VPC2}]
+
+  Subnet2a:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC2
+      CidrBlock: 10.20.1.0/24
+      AvailabilityZone: !Sub "${AWS::Region}a"
+      Tags: [{Key: Name, Value: VPC2-Sub1-Inst}]
+  Subnet2b:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC2
+      CidrBlock: 10.20.2.0/24
+      AvailabilityZone: !Sub "${AWS::Region}b"
+      Tags: [{Key: Name, Value: VPC2-Sub2-Inst}]
+
+  TGWSubnet2a:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC2
+      CidrBlock: 10.20.10.0/24
+      AvailabilityZone: !Sub "${AWS::Region}a"
+      Tags: [{Key: Name, Value: VPC2-TGW-Sub-a}]
+  TGWSubnet2b:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC2
+      CidrBlock: 10.20.11.0/24
+      AvailabilityZone: !Sub "${AWS::Region}b"
+      Tags: [{Key: Name, Value: VPC2-TGW-Sub-b}]
+
+  RT2:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC2
+      Tags: [{Key: Name, Value: RT-VPC2}]
+
+  Route2toTGW:
+    Type: AWS::EC2::Route
+    DependsOn: AttachVPC2
+    Properties:
+      RouteTableId: !Ref RT2
+      DestinationCidrBlock: 10.0.0.0/8
+      TransitGatewayId: !Ref MyTGW
+
+  RTAssoc2a:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: {RouteTableId: !Ref RT2, SubnetId: !Ref Subnet2a}
+  RTAssoc2b:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: {RouteTableId: !Ref RT2, SubnetId: !Ref Subnet2b}
+  RTAssoc2TGWa:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: {RouteTableId: !Ref RT2, SubnetId: !Ref TGWSubnet2a}
+  RTAssoc2TGWb:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: {RouteTableId: !Ref RT2, SubnetId: !Ref TGWSubnet2b}
+
+  SG2:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow All Traffic
+      VpcId: !Ref VPC2
+      SecurityGroupIngress: [{IpProtocol: -1, CidrIp: 0.0.0.0/0}]
+
+  InstVPC2a:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiId
+      SubnetId: !Ref Subnet2a
+      SecurityGroupIds: [!Ref SG2]
+      KeyName: !Ref KeyName
+      Tags: [{Key: Name, Value: VPC2-Inst1}]
+
+  InstVPC2b:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiId
+      SubnetId: !Ref Subnet2b
+      SecurityGroupIds: [!Ref SG2]
+      KeyName: !Ref KeyName
+      Tags: [{Key: Name, Value: VPC2-Inst2}]
+
+  # --- TGW Attachments (연동 서브넷 지정) ---
+  AttachVPC0:
+    Type: AWS::EC2::TransitGatewayAttachment
+    Properties:
+      SubnetIds: [!Ref Subnet0]
+      TransitGatewayId: !Ref MyTGW
+      VpcId: !Ref VPC0
+
+  AttachVPC1:
+    Type: AWS::EC2::TransitGatewayAttachment
+    Properties:
+      SubnetIds: 
+        - !Ref TGWSubnet1a # AZ-a 전용 서브넷
+        - !Ref TGWSubnet1b # AZ-b 전용 서브넷
+      TransitGatewayId: !Ref MyTGW
+      VpcId: !Ref VPC1
+
+  AttachVPC2:
+    Type: AWS::EC2::TransitGatewayAttachment
+    Properties:
+      SubnetIds: 
+        - !Ref TGWSubnet2a # AZ-a 전용 서브넷
+        - !Ref TGWSubnet2b # AZ-b 전용 서브넷
+      TransitGatewayId: !Ref MyTGW
+      VpcId: !Ref VPC2

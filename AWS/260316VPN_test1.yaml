@@ -1,0 +1,158 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Site-to-Site VPN Lab - Seoul Region with Rocky Linux 9 (t3.small)'
+
+Parameters:
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: "사용하실 키페어를 선택하세요."
+  MyIP:
+    Type: String
+    Description: "SSH 접속을 허용할 IP (예: 1.2.3.4/32). 모르시면 0.0.0.0/0 유지."
+    Default: '0.0.0.0/0'
+
+Resources:
+  # ==========================================
+  # 1. IDC 환경 (VPC1 - 10.60.0.0/16)
+  # ==========================================
+  IDCVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.60.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags: [{Key: Name, Value: IDC-VPC1}]
+
+  IDCPublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref IDCVPC
+      CidrBlock: 10.60.1.0/24
+      MapPublicIpOnLaunch: true
+      Tags: [{Key: Name, Value: IDC-Public-SN}]
+
+  IDCIGW:
+    Type: AWS::EC2::InternetGateway
+  
+  IGWAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties: {VpcId: !Ref IDCVPC, InternetGatewayId: !Ref IDCIGW}
+
+  # IDC 라우팅 테이블 생성
+  IDCRT:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref IDCVPC
+      Tags: [{Key: Name, Value: IDC-Public-RT}]
+
+  # 인터넷 게이트웨이로 나가는 '길' (이게 빠졌었습니다!)
+  IDCPublicRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref IDCRT
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref IDCIGW
+
+  # 서브넷과 라우팅 테이블 연결
+  IDCSubnetRTAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref IDCPublicSubnet
+      RouteTableId: !Ref IDCRT
+
+  IDCCGWSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "Allow VPN Tunnels (UDP 500, 4500) and SSH"
+      VpcId: !Ref IDCVPC
+      SecurityGroupIngress:
+        - IpProtocol: udp
+          FromPort: 500
+          ToPort: 500
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: udp
+          FromPort: 4500
+          ToPort: 4500
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref MyIP
+        - IpProtocol: icmp
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+
+  # IDC-CGW 인스턴스 (Rocky Linux 9)
+  IDCCGWInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.small  # 요청하신 t3.small 적용
+      ImageId: "ami-06b18c6a9a323f75f" # 직접 찾으신 서울 리전 Rocky 9 AMI
+      KeyName: !Ref KeyName
+      SubnetId: !Ref IDCPublicSubnet
+      SecurityGroupIds: [!Ref IDCCGWSG]
+      SourceDestCheck: false # 라우터 역할을 위해 필수
+      Tags: [{Key: Name, Value: IDC-CGW}]
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          # 커널 파라미터 수정 (IP Forwarding 허용)
+          cat <<EOF > /etc/sysctl.d/99-vpn.conf
+          net.ipv4.ip_forward = 1
+          net.ipv4.conf.all.accept_redirects = 0
+          net.ipv4.conf.all.send_redirects = 0
+          net.ipv4.conf.default.send_redirects = 0
+          net.ipv4.conf.eth0.send_redirects = 0
+          net.ipv4.conf.default.accept_redirects = 0
+          net.ipv4.conf.eth0.accept_redirects = 0
+          net.ipv4.conf.all.rp_filter = 0
+          net.ipv4.conf.default.rp_filter = 0
+          net.ipv4.conf.eth0.rp_filter = 0
+          EOF
+          sysctl --system
+          # 필수 패키지 설치
+          dnf install -y openswan tcpdump
+          # 설정 스크립트 미리 받아두기
+          curl -o /etc/ipsec.d/vpnconfig.sh https://cloudneta-book.s3.ap-northeast-2.amazonaws.com/chapter6/6_lab_s2s-vpnconfig.sh
+          chmod +x /etc/ipsec.d/vpnconfig.sh
+
+  # ==========================================
+  # 2. AWS 환경 (VPC2 - 10.50.0.0/16)
+  # ==========================================
+  AWSVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.50.0.0/16
+      Tags: [{Key: Name, Value: AWS-VPC2}]
+
+  AWSVPNGW:
+    Type: AWS::EC2::VPNGateway
+    Properties:
+      Type: ipsec.1
+      Tags: [{Key: Name, Value: AWS-VGW}]
+
+  VPCGWAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref AWSVPC
+      VpnGatewayId: !Ref AWSVPNGW
+
+  # ==========================================
+  # 3. VPN 연결 (VPC1과 VPC2를 잇는 터널)
+  # ==========================================
+  CustomerGateway:
+    Type: AWS::EC2::CustomerGateway
+    Properties:
+      BgpAsn: 65000
+      IpAddress: !GetAtt IDCCGWInstance.PublicIp
+      Type: ipsec.1
+      Tags: [{Key: Name, Value: IDC-CGW-Object}]
+
+  VPNConnection:
+    Type: AWS::EC2::VPNConnection
+    Properties:
+      CustomerGatewayId: !Ref CustomerGateway
+      StaticRoutesOnly: true
+      Type: ipsec.1
+      VpnGatewayId: !Ref AWSVPNGW
+      Tags: [{Key: Name, Value: S2S-VPN-Tunnel}]

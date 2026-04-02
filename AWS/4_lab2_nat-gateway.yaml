@@ -1,0 +1,245 @@
+Parameters:
+  KeyName:
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the instances. Linked to AWS Parameter
+    Type: AWS::EC2::KeyPair::KeyName
+    ConstraintDescription: must be the name of an existing EC2 KeyPair.
+  LatestAmiId:
+    Description: (DO NOT CHANGE)
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64'
+    AllowedValues:
+      - /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64
+
+
+Resources:
+  VPC1:
+    Type: AWS::EC2::VPC
+    Properties:
+     CidrBlock: 10.40.0.0/16
+     EnableDnsSupport: true
+     EnableDnsHostnames: true
+     Tags:
+      - Key: Name
+        Value: NATInstance-VPC1
+        
+  InternetGateway1:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: NATInstance-IGW1
+          
+  InternetGatewayAttachment1:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref InternetGateway1
+      VpcId: !Ref VPC1
+
+  RouteTable1:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC1
+      Tags:
+        - Key: Name
+          Value: NATInstance-PublicRouteTable1
+          
+  DefaultRoute1:
+    Type: AWS::EC2::Route
+    DependsOn: InternetGatewayAttachment1
+    Properties:
+      RouteTableId: !Ref RouteTable1
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway1
+      
+  Subnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC1
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      CidrBlock: 10.40.1.0/24
+      Tags:
+        - Key: Name
+          Value: NATInstance-VPC1-Subnet1
+          
+  Subnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref RouteTable1
+      SubnetId: !Ref Subnet1
+
+  RouteTable2:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC1
+      Tags:
+        - Key: Name
+          Value: NATInstance-PrivateRouteTable1
+          
+  NATRoute:
+    Type: AWS::EC2::Route
+    DependsOn: InternetGatewayAttachment1
+    Properties:
+      RouteTableId: !Ref RouteTable2
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NATGateWay
+          
+  Subnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC1
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      CidrBlock: 10.40.2.0/24
+      Tags:
+        - Key: Name
+          Value: NATInstance-VPC1-Subnet2
+          
+  Subnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref RouteTable2
+      SubnetId: !Ref Subnet2
+      
+  NATGateWay:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt EIP.AllocationId
+      SubnetId: !Ref Subnet1
+      Tags:
+        - Key: Name
+          Value: NAT-Gateway
+          
+  EIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      
+  SG1:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !Ref VPC1
+      GroupDescription: VPC1-NATInstance-SecurityGroup
+      Tags:
+      - Key : Name
+        Value : VPC1-NATInstance-SecurityGroup
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: '22'
+        ToPort: '22'
+        CidrIp: 0.0.0.0/0
+      - IpProtocol: tcp
+        FromPort: '80'
+        ToPort: '80'
+        CidrIp: 10.40.0.0/16
+      - IpProtocol: tcp
+        FromPort: '443'
+        ToPort: '443'
+        CidrIp: 10.40.0.0/16
+      - IpProtocol: icmp
+        FromPort: -1
+        ToPort: -1
+        CidrIp: 0.0.0.0/0
+
+  SG2:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !Ref VPC1
+      GroupDescription: VPC1-PrivateEC2-SecurityGroup
+      Tags:
+      - Key : Name
+        Value : VPC1-PrivateEC2-SecurityGroup
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: '22'
+        ToPort: '22'
+        CidrIp: 10.40.0.0/16
+      - IpProtocol: icmp
+        FromPort: -1
+        ToPort: -1
+        CidrIp: 0.0.0.0/0    
+
+  Instance2:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref LatestAmiId
+      InstanceType: t3.micro
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: Private-EC2-1
+      NetworkInterfaces:
+        - DeviceIndex: 0
+          SubnetId: !Ref Subnet2
+          GroupSet:
+          - !Ref SG2
+          PrivateIpAddress: 10.40.2.101
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          (
+          echo "qwe123"
+          echo "qwe123"
+          ) | passwd --stdin root
+          sed -i "s/^PasswordAuthentication no/PasswordAuthentication yes/g" /etc/ssh/sshd_config
+          sed -i "s/^#PermitRootLogin prohibit-password/PermitRootLogin yes/g" /etc/ssh/sshd_config
+          service sshd restart
+          hostnamectl --static set-hostname Private-EC2-1  
+          cat <<EOT > /etc/profile.d/prompt.sh
+          export PS1="[\[\e[1;31m\]\u\[\e[m\]@\[\e[1;32m\]\h\[\e[m\]: \[\e[1;36m\]\w\[\e[m\]]#"
+          EOT
+          source /etc/profile
+          
+  Instance3:
+    Type: AWS::EC2::Instance
+    # DependsOn: Instance1
+    Properties:
+      ImageId: !Ref LatestAmiId
+      InstanceType: t3.micro
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: Private-EC2-2
+      NetworkInterfaces:
+        - DeviceIndex: 0
+          SubnetId: !Ref Subnet2
+          GroupSet:
+          - !Ref SG2
+          PrivateIpAddress: 10.40.2.102
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          (
+          echo "qwe123"
+          echo "qwe123"
+          ) | passwd --stdin root
+          sed -i "s/^PasswordAuthentication no/PasswordAuthentication yes/g" /etc/ssh/sshd_config
+          sed -i "s/^#PermitRootLogin prohibit-password/PermitRootLogin yes/g" /etc/ssh/sshd_config
+          service sshd restart
+          hostnamectl --static set-hostname Private-EC2-2 
+          cat <<EOT > /etc/profile.d/prompt.sh
+          export PS1="[\[\e[1;31m\]\u\[\e[m\]@\[\e[1;32m\]\h\[\e[m\]: \[\e[1;36m\]\w\[\e[m\]]#"
+          EOT
+          source /etc/profile
+
+  Instance4:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiId
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: Public-EC2
+      NetworkInterfaces:
+        - DeviceIndex: 0
+          SubnetId: !Ref Subnet1
+          GroupSet:
+          - !Ref SG1
+          AssociatePublicIpAddress: true
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          hostnamectl --static set-hostname Public-EC2-1
+          cat <<EOT > /etc/profile.d/prompt.sh
+          export PS1="[\[\e[1;31m\]\u\[\e[m\]@\[\e[1;32m\]\h\[\e[m\]: \[\e[1;36m\]\w\[\e[m\]]#"
+          EOT
+          source /etc/profile

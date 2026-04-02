@@ -1,0 +1,157 @@
+Parameters:
+  KeyName:
+    Description: Name of existing EC2 KeyPair to enable SSH access to the instance
+    Type: AWS::EC2::KeyPair::KeyName
+    ConstraintDescription: must be the name of an existing EC2 KeyPair.
+  LatestAmiId:
+    Description: (DO NOT CHANGE)
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64'
+    AllowedValues:
+      - /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64
+
+Resources:
+  MyVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      CidrBlock: 10.0.0.0/16
+      Tags:
+        - Key: Name
+          Value: My-VPC      
+
+  MyPublicSN1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref MyVPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      CidrBlock: 10.0.0.0/24
+      Tags:
+        - Key: Name
+          Value: My-Public-SN-1
+
+  MyPublicSN2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref MyVPC
+      AvailabilityZone: !Select [ 2, !GetAZs '' ]
+      CidrBlock: 10.0.1.0/24
+      Tags:
+        - Key: Name
+          Value: My-Public-SN-2
+
+  MyIGW:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: My-IGW
+
+  MyIGWAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref MyIGW
+      VpcId: !Ref MyVPC
+
+  MyPublicRT:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref MyVPC
+      Tags:
+        - Key: Name
+          Value: My-Public-RT
+
+  DefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: MyIGWAttachment
+    Properties:
+      RouteTableId: !Ref MyPublicRT
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref MyIGW
+
+  MyPublicSN1Association:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref MyPublicRT
+      SubnetId: !Ref MyPublicSN1
+
+  MyPublicSN2Association:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref MyPublicRT
+      SubnetId: !Ref MyPublicSN2
+
+  # --- 보안 그룹 ---
+  WEBSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow HTTP and SSH
+      VpcId: !Ref MyVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: WEB-SG
+
+  # --- EC2 인스턴스 ---
+  EC21:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiId
+      KeyName: !Ref KeyName
+      NetworkInterfaces:
+        - DeviceIndex: 0
+          SubnetId: !Ref MyPublicSN1
+          AssociatePublicIpAddress: true
+          GroupSet:
+            - !Ref WEBSG
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          dnf install -y httpd
+          systemctl start httpd
+          systemctl enable httpd
+          echo "<h1>Welcome to EC2-1</h1>" > /var/www/html/index.html
+      Tags:
+        - Key: Name
+          Value: EC2-1
+
+  EC22:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiId
+      KeyName: !Ref KeyName
+      NetworkInterfaces:
+        - DeviceIndex: 0
+          SubnetId: !Ref MyPublicSN2
+          AssociatePublicIpAddress: true
+          GroupSet:
+            - !Ref WEBSG
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          dnf install -y httpd
+          systemctl start httpd
+          systemctl enable httpd
+          echo "<h1>Welcome to EC2-2</h1>" > /var/www/html/index.html
+      Tags:
+        - Key: Name
+          Value: EC2-2
+
+  # --- Route 53 설정 ---
+  PublicDNS:
+    Type: AWS::Route53::HostedZone
+    Properties:
+      Name: xhwoddl.cloud
+      HostedZoneConfig:
+        Comment: Public hosted zone For xhwoddl.cloud                    

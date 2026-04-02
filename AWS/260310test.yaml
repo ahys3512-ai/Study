@@ -1,0 +1,681 @@
+Parameters:
+  KeyName:
+    Description: Name of existing EC2 KeyPair to enable SSH access to the instance
+    Type: AWS::EC2::KeyPair::KeyName
+    ConstraintDescription: must be the name of an existing EC2 KeyPair.
+  LatestAmiId:
+    Description: (DO NOT CHANGE)
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64'
+    AllowedValues:
+      - /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64
+
+Resources:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      CidrBlock: 10.1.0.0/16
+      Tags:
+        - Key: Name
+          Value: My-VPC
+
+  Subnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      CidrBlock: 10.1.1.0/24
+      Tags:
+        - Key: Name
+          Value: My-Public-SN-1
+
+  Subnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 2, !GetAZs '' ]
+      CidrBlock: 10.1.2.0/24
+      Tags:
+        - Key: Name
+          Value: My-Public-SN-2
+
+  Subnet3:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      CidrBlock: 10.1.3.0/24
+      Tags:
+        - Key: Name
+          Value: My-Private-SN-3
+
+  Subnet4:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 2, !GetAZs '' ]
+      CidrBlock: 10.1.4.0/24
+      Tags:
+        - Key: Name
+          Value: My-Private-SN-4
+
+  RouteTable1:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: My-Public-RT
+
+  Subnet1RouteTable1Association:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref RouteTable1
+      SubnetId: !Ref Subnet1
+
+  Subnet2RouteTable1Association:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref RouteTable1
+      SubnetId: !Ref Subnet2
+
+  IGW1:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: My-IGW
+
+  IGW1Attachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref IGW1
+      VpcId: !Ref VPC
+
+  DefaultPublicRoute1:
+    Type: AWS::EC2::Route
+    DependsOn: IGW1Attachment
+    Properties:
+      RouteTableId: !Ref RouteTable1
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref IGW1
+
+  NATInstance1:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiId
+      KeyName: !Ref KeyName
+      SourceDestCheck: false
+      Tags:
+        - Key: Name
+          Value: NATInstance1
+      NetworkInterfaces:
+        - DeviceIndex: 0
+          NetworkInterfaceId: !Ref Instance1ENIEth0
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          set -euxo pipefail
+          IFACE="$(ip route show default | awk '/default/ {print $5; exit}')"
+          dnf install -y iptables-services
+          systemctl enable --now iptables
+          cat >/etc/sysctl.d/90-nat.conf <<'EOF'
+          net.ipv4.ip_forward=1
+          EOF
+          sysctl --system
+          /sbin/iptables -t nat -F
+          /sbin/iptables -F FORWARD
+          /sbin/iptables -P FORWARD ACCEPT
+          /sbin/iptables -t nat -A POSTROUTING -o "$IFACE" -j MASQUERADE
+          service iptables save
+
+  Instance1ENIEth0:
+    Type: AWS::EC2::NetworkInterface
+    Properties:
+      SubnetId: !Ref Subnet1
+      Description: Instance1 eth0
+      GroupSet:
+      - !Ref NATInstanceSecurityGroup
+      PrivateIpAddress: 10.1.1.100
+      Tags:
+        - Key: Name
+          Value: NAT-Instance1-eth0
+
+  VPCEIP1:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  VPCAssociateEIP1:
+    Type: AWS::EC2::EIPAssociation
+    DependsOn: NATInstance1
+    Properties:
+      AllocationId: !GetAtt VPCEIP1.AllocationId
+      NetworkInterfaceId: !Ref Instance1ENIEth0
+
+  NATInstance2:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiId
+      KeyName: !Ref KeyName
+      SourceDestCheck: false
+      Tags:
+        - Key: Name
+          Value: NATInstance2
+      NetworkInterfaces:
+        - DeviceIndex: 0
+          NetworkInterfaceId: !Ref Instance2ENIEth0
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          set -euxo pipefail
+          IFACE="$(ip route show default | awk '/default/ {print $5; exit}')"
+          dnf install -y iptables-services
+          systemctl enable --now iptables
+          cat >/etc/sysctl.d/90-nat.conf <<'EOF'
+          net.ipv4.ip_forward=1
+          EOF
+          sysctl --system
+          /sbin/iptables -t nat -F
+          /sbin/iptables -F FORWARD
+          /sbin/iptables -P FORWARD ACCEPT
+          /sbin/iptables -t nat -A POSTROUTING -o "$IFACE" -j MASQUERADE
+          service iptables save
+
+  Instance2ENIEth0:
+    Type: AWS::EC2::NetworkInterface
+    Properties:
+      SubnetId: !Ref Subnet2
+      Description: Instance2 eth0
+      GroupSet:
+      - !Ref NATInstanceSecurityGroup
+      PrivateIpAddress: 10.1.2.100
+      Tags:
+        - Key: Name
+          Value: NAT-Instance2-eth0
+
+  VPCEIP2:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  VPCAssociateEIP2:
+    Type: AWS::EC2::EIPAssociation
+    DependsOn: NATInstance2
+    Properties:
+      AllocationId: !GetAtt VPCEIP2.AllocationId
+      NetworkInterfaceId: !Ref Instance2ENIEth0
+
+  RouteTable2:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: My-Private-RT-1
+
+  Subnet3RouteTable2Association:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref RouteTable2
+      SubnetId: !Ref Subnet3
+
+  NATRoute1:
+    Type: AWS::EC2::Route
+    DependsOn: NATInstance1
+    Properties:
+      RouteTableId: !Ref RouteTable2
+      DestinationCidrBlock: 0.0.0.0/0
+      NetworkInterfaceId: !Ref Instance1ENIEth0
+
+  RouteTable3:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: My-Private-RT-2
+
+  Subnet4RouteTable3Association:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref RouteTable3
+      SubnetId: !Ref Subnet4
+
+  NATRoute2:
+    Type: AWS::EC2::Route
+    DependsOn: NATInstance2
+    Properties:
+      RouteTableId: !Ref RouteTable3
+      DestinationCidrBlock: 0.0.0.0/0
+      NetworkInterfaceId: !Ref Instance2ENIEth0
+
+  # Instance3:
+  #   Type: AWS::EC2::Instance
+  #   Properties:
+  #     InstanceType: t3.micro
+  #     ImageId: !Ref LatestAmiId
+  #     KeyName: !Ref KeyName
+  #     Tags:
+  #       - Key: Name
+  #         Value: My-Instance-3
+  #     NetworkInterfaces:
+  #       - DeviceIndex: 0
+  #         SubnetId: !Ref Subnet3
+  #         PrivateIpAddress: 10.1.3.100
+  #         GroupSet:
+  #         - !Ref MySecurityGroup
+  #     UserData:
+  #       Fn::Base64:
+  #         !Sub |
+  #           #!/bin/bash
+  #           (
+  #           echo "qwe123"
+  #           echo "qwe123"
+  #           ) | passwd --stdin root
+  #           sed -i "s/^PasswordAuthentication no/PasswordAuthentication yes/g" /etc/ssh/sshd_config
+  #           sed -i "s/^#PermitRootLogin prohibit-password/PermitRootLogin yes/g" /etc/ssh/sshd_config
+  #           service sshd restart
+  #           hostnamectl --static set-hostname Seoul-AWS-WebSrv1
+  #           cat <<EOT > /etc/profile.d/prompt.sh
+  #           export PS1="[\[\e[1;31m\]\u\[\e[m\]@\[\e[1;32m\]\h\[\e[m\]: \[\e[1;36m\]\w\[\e[m\]]#"
+  #           EOT
+  #           source /etc/profile
+  #           TOKEN=$(curl -sS -X PUT "http://169.254.169.254/latest/api/token" \
+  #             -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+  #           RZAZ=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/availability-zone-id)
+  #           IID=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
+  #           LIP=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/local-ipv4)
+  #           dnf install -y httpd php htop tmux
+  #           systemctl start httpd && systemctl enable httpd
+  #           echo "<h1>RegionAz($RZAZ) : Instance ID($IID) : Private IP($LIP) : Main Web-Soldesk</h1>" > /var/www/html/index.html
+  #           echo "1" > /var/www/html/HealthCheck.txt
+  #           curl -o /var/www/html/load.php https://cloudneta-book.s3.ap-northeast-2.amazonaws.com/chapter5/load.php --silent
+
+  # Instance4:
+  #   Type: AWS::EC2::Instance
+  #   Properties:
+  #     InstanceType: t3.micro
+  #     ImageId: !Ref LatestAmiId
+  #     KeyName: !Ref KeyName
+  #     Tags:
+  #       - Key: Name
+  #         Value: My-Instance-4
+  #     NetworkInterfaces:
+  #       - DeviceIndex: 0
+  #         SubnetId: !Ref Subnet4
+  #         PrivateIpAddress: 10.1.4.100
+  #         GroupSet:
+  #         - !Ref MySecurityGroup
+  #     UserData:
+  #       Fn::Base64:
+  #         !Sub |
+  #           #!/bin/bash
+  #           (
+  #           echo "qwe123"
+  #           echo "qwe123"
+  #           ) | passwd --stdin root
+  #           sed -i "s/^PasswordAuthentication no/PasswordAuthentication yes/g" /etc/ssh/sshd_config
+  #           sed -i "s/^#PermitRootLogin prohibit-password/PermitRootLogin yes/g" /etc/ssh/sshd_config
+  #           service sshd restart
+  #           hostnamectl --static set-hostname Seoul-AWS-WebSrv2
+  #           cat <<EOT > /etc/profile.d/prompt.sh
+  #           export PS1="[\[\e[1;31m\]\u\[\e[m\]@\[\e[1;32m\]\h\[\e[m\]: \[\e[1;36m\]\w\[\e[m\]]#"
+  #           EOT
+  #           source /etc/profile
+  #           TOKEN=$(curl -sS -X PUT "http://169.254.169.254/latest/api/token" \
+  #             -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+  #           RZAZ=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/availability-zone-id)
+  #           IID=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
+  #           LIP=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/local-ipv4)
+  #           dnf install -y httpd php htop tmux
+  #           systemctl start httpd && systemctl enable httpd
+  #           echo "<h1>RegionAz($RZAZ) : Instance ID($IID) : Private IP($LIP) : Main Web-Soldesk</h1>" > /var/www/html/index.html
+  #           echo "1" > /var/www/html/HealthCheck.txt
+  #           curl -o /var/www/html/load.php https://cloudneta-book.s3.ap-northeast-2.amazonaws.com/chapter5/load.php --silent
+
+  NATInstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      Tags:
+        - Key: Name
+          Value: NAT-SG
+      GroupDescription: Enable HTTP access via port 80 and SSH access via port 22
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp #인터넷 접속
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp #SSH 원격접속
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: icmp # ping 테스트
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 10.1.0.0/16
+
+  MySecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      Tags:
+        - Key: Name
+          Value: My-SG
+      GroupDescription: Enable HTTP access via port 80 and SSH access via port 22
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: icmp
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 10.1.0.0/16
+
+# [1] Launch Template: 기본접속경로
+  MainLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: My-Web-LaunchTemplate
+      LaunchTemplateData:
+        NetworkInterfaces:
+          - DeviceIndex: 0
+            Groups:
+              - !Ref MySecurityGroup
+            # 프라이빗 서브넷에 배치되므로 공인 IP는 필요 없습니다 (NAT Instance 사용)
+            DeleteOnTermination: true
+            # AssociatePublicIpAddress: false
+        ImageId: !Ref LatestAmiId
+        InstanceType: t3.micro
+        KeyName: !Ref KeyName
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            # 기본 웹 서버 및 도구 설치
+            dnf install -y httpd php htop tmux
+            systemctl start httpd && systemctl enable httpd
+            
+            # 메타데이터 토큰 가져오기 (IMDSv2)
+            TOKEN=$(curl -sS -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+            IID=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
+            LIP=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/local-ipv4)
+            
+            # 테스트용 웹 페이지 생성
+            echo "<h1>ASG Instance ID: $IID</h1>" > /var/www/html/index.html
+            echo "<h3>Private IP: $LIP</h3>" >> /var/www/html/index.html
+            
+            # CPU 부하 테스트용 파일 다운로드 (실습용)
+            curl -o /var/www/html/load.php https://cloudneta-book.s3.ap-northeast-2.amazonaws.com/chapter5/load.php --silent
+
+
+# [2] Launch Template: Dev 접속경로
+  DevLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: My-Dev-LaunchTemplate
+      LaunchTemplateData:
+        NetworkInterfaces:
+          - DeviceIndex: 0
+            Groups:
+              - !Ref MySecurityGroup
+            # 프라이빗 서브넷에 배치되므로 공인 IP는 필요 없습니다 (NAT Instance 사용)
+            DeleteOnTermination: true
+            # AssociatePublicIpAddress: false
+        ImageId: !Ref LatestAmiId
+        InstanceType: t3.micro
+        KeyName: !Ref KeyName
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            # 기본 웹 서버 및 도구 설치
+            dnf install -y httpd php htop tmux
+            systemctl start httpd && systemctl enable httpd
+            
+            # 메타데이터 토큰 가져오기 (IMDSv2)
+            TOKEN=$(curl -sS -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+            IID=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
+            LIP=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/local-ipv4)
+            
+            # 테스트용 웹 페이지 생성
+            mkdir -p /var/www/html/dev
+            echo "<h1>DEV Server: $(hostname)</h1>" > /var/www/html/dev/index.html
+            echo "<h3>Private IP: $LIP</h3>" >> /var/www/html/index.html
+            
+            # CPU 부하 테스트용 파일 다운로드 (실습용)
+            curl -o /var/www/html/load.php https://cloudneta-book.s3.ap-northeast-2.amazonaws.com/chapter5/load.php --silent
+
+
+# [3] Launch Template: Mgt 접속경로
+  MgtLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: My-Mgt-LaunchTemplate
+      LaunchTemplateData:
+        NetworkInterfaces:
+          - DeviceIndex: 0
+            Groups:
+              - !Ref MySecurityGroup
+            # 프라이빗 서브넷에 배치되므로 공인 IP는 필요 없습니다 (NAT Instance 사용)
+            DeleteOnTermination: true
+            # AssociatePublicIpAddress: false
+        ImageId: !Ref LatestAmiId
+        InstanceType: t3.micro
+        KeyName: !Ref KeyName
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            # 기본 웹 서버 및 도구 설치
+            dnf install -y httpd php htop tmux
+            systemctl start httpd && systemctl enable httpd
+            
+            # 메타데이터 토큰 가져오기 (IMDSv2)
+            TOKEN=$(curl -sS -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+            IID=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
+            LIP=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/local-ipv4)
+            
+            # 테스트용 웹 페이지 생성
+            mkdir -p /var/www/html/mgt
+            echo "<h1>Mgt Server: $(hostname)</h1>" > /var/www/html/mgt/index.html
+            echo "<h3>Private IP: $LIP</h3>" >> /var/www/html/index.html
+            
+            # CPU 부하 테스트용 파일 다운로드 (실습용)
+            curl -o /var/www/html/load.php https://cloudneta-book.s3.ap-northeast-2.amazonaws.com/chapter5/load.php --silent
+
+
+
+  # Main ASG
+  MainASG:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: Main-Web-ASG
+      VPCZoneIdentifier:
+        - !Ref Subnet3
+        - !Ref Subnet4
+      Cooldown: 10
+      # HealthCheckGracePeriod: 120
+      LaunchTemplate:
+        LaunchTemplateId: !Ref MainLaunchTemplate
+        Version: !GetAtt MainLaunchTemplate.LatestVersionNumber
+      MinSize: '1'
+      MaxSize: '4'
+      DesiredCapacity: '2'
+      Tags:
+        - Key: Name
+          Value: web-ASG
+          PropagateAtLaunch: true
+      TargetGroupARNs:
+        - !Ref MainTG # 아래에서 TargetGroup 연결
+      HealthCheckType: ELB # SAA 단골 문제! 서비스 상태까지 체크
+      HealthCheckGracePeriod: 300 # HealthCheck 무한반복 방지용 시간 넉넉하게
+    DependsOn: [ NATRoute1, NATRoute2 ]
+    # NAT 인스턴스가 먼저 준비되어야 UserData(dnf install)가 성공합니다.
+
+  # Dev ASG
+  DevASG:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: Dev-Web-ASG
+      VPCZoneIdentifier:
+        - !Ref Subnet3
+        - !Ref Subnet4
+      Cooldown: 10
+      # HealthCheckGracePeriod: 120
+      LaunchTemplate:
+        LaunchTemplateId: !Ref DevLaunchTemplate
+        Version: !GetAtt DevLaunchTemplate.LatestVersionNumber
+      MinSize: '1'
+      MaxSize: '4'
+      DesiredCapacity: '2'
+      Tags:
+        - Key: Name
+          Value: web-ASG
+          PropagateAtLaunch: true
+      TargetGroupARNs:
+        - !Ref DevTG # 아래에서 TargetGroup 연결
+      HealthCheckType: ELB # SAA 단골 문제! 서비스 상태까지 체크
+      HealthCheckGracePeriod: 300 # HealthCheck 무한반복 방지용 시간 넉넉하게
+    DependsOn: [ NATRoute1, NATRoute2 ]
+    # NAT 인스턴스가 먼저 준비되어야 UserData(dnf install)가 성공합니다.
+
+  # Mgt ASG
+  MgtASG:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: Mgt-Web-ASG
+      VPCZoneIdentifier:
+        - !Ref Subnet3
+        - !Ref Subnet4
+      Cooldown: 10
+      # HealthCheckGracePeriod: 120
+      LaunchTemplate:
+        LaunchTemplateId: !Ref MgtLaunchTemplate
+        Version: !GetAtt MgtLaunchTemplate.LatestVersionNumber
+      MinSize: '1'
+      MaxSize: '4'
+      DesiredCapacity: '2'
+      Tags:
+        - Key: Name
+          Value: web-ASG
+          PropagateAtLaunch: true
+      TargetGroupARNs:
+        - !Ref MgtTG # 아래에서 TargetGroup 연결
+      HealthCheckType: ELB # SAA 단골 문제! 서비스 상태까지 체크
+      HealthCheckGracePeriod: 300 # HealthCheck 무한반복 방지용 시간 넉넉하게
+    DependsOn: [ NATRoute1, NATRoute2 ]
+    # NAT 인스턴스가 먼저 준비되어야 UserData(dnf install)가 성공합니다.
+
+  # Target Groups
+  MainTG:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: TG-Main
+      Tags:
+        - Key: Name
+          Value: TG-Main
+      Port: 80
+      Protocol: HTTP
+      VpcId: !Ref VPC
+      HealthCheckPath: /index.html
+      TargetType: instance
+      HealthCheckIntervalSeconds: 10
+      HealthyThresholdCount: 3
+      UnhealthyThresholdCount: 3
+
+  DevTG:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: TG-Dev
+      Tags:
+        - Key: Name
+          Value: TG-Dev
+      Port: 80
+      Protocol: HTTP
+      VpcId: !Ref VPC
+      HealthCheckPath: /dev/index.html
+      TargetType: instance
+      HealthCheckIntervalSeconds: 10
+      HealthyThresholdCount: 3
+      UnhealthyThresholdCount: 3
+
+  MgtTG:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: TG-Mgt
+      Tags:
+        - Key: Name
+          Value: TG-Mgt
+      Port: 80
+      Protocol: HTTP
+      VpcId: !Ref VPC
+      HealthCheckPath: /mgt/index.html
+      TargetType: instance
+      HealthCheckIntervalSeconds: 10
+      HealthyThresholdCount: 3
+      UnhealthyThresholdCount: 3
+
+  # ALB
+  MyALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: My-Web-ALB
+      Subnets:
+        - !Ref Subnet1
+        - !Ref Subnet2
+      SecurityGroups:
+        - !Ref MySecurityGroup # ALB용 보안그룹 (80포트 허용 필수)
+      Scheme: internet-facing
+      LoadBalancerAttributes:
+        - Key: idle_timeout.timeout_seconds
+          Value: '60'
+
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref MainTG # 아무 조건 없으면 MainTG로
+      LoadBalancerArn: !Ref MyALB
+      Port: 80
+      Protocol: HTTP        
+
+  DevRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref DevTG
+      Conditions:
+        - Field: path-pattern
+          Values: [ "/dev/*" ]
+      ListenerArn: !Ref ALBListener
+      Priority: 10
+
+  MgtRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref MgtTG
+      Conditions:
+        - Field: path-pattern
+          Values: [ "/mgt/*" ]
+      ListenerArn: !Ref ALBListener
+      Priority: 20

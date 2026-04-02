@@ -1,0 +1,13 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Lab6-1 Full Architecture (Two VPCs, NLB + ALB) for AWS Education Practice
+
+Parameters:
+  KeyName:
+    Description: EC2 KeyPair for SSH
+    Type: AWS::EC2::KeyPair::KeyName
+
+  LatestAmiId:
+    Description: Latest Amazon Linux
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: /aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2
+

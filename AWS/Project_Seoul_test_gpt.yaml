@@ -1,0 +1,418 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Seoul Full Infra - High Availability with ALB, TGW, and DNS
+
+Parameters:
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Default: EC2-test
+
+Resources:
+  # --- [1] VPCs ---
+  VpcCloud:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.1.0.0/16
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: Seoul-Cloud-VPC
+
+  VpcIdc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.2.0.0/16
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: Seoul-IDC-VPC
+
+  # --- [2] Subnets (Cloud) ---
+  SubPub1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VpcCloud
+      CidrBlock: 10.1.1.0/24
+      AvailabilityZone: !Sub "${AWS::Region}a"
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: Cloud-Pub-1
+
+  SubPub2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VpcCloud
+      CidrBlock: 10.1.2.0/24
+      AvailabilityZone: !Sub "${AWS::Region}c"
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: Cloud-Pub-2
+
+  SubPriv1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VpcCloud
+      CidrBlock: 10.1.3.0/24
+      AvailabilityZone: !Sub "${AWS::Region}a"
+      Tags:
+        - Key: Name
+          Value: Cloud-Priv-1
+
+  SubPriv2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VpcCloud
+      CidrBlock: 10.1.4.0/24
+      AvailabilityZone: !Sub "${AWS::Region}c"
+      Tags:
+        - Key: Name
+          Value: Cloud-Priv-2
+
+  SubIdc:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VpcIdc
+      CidrBlock: 10.2.1.0/24
+      AvailabilityZone: !Sub "${AWS::Region}a"
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: IDC-Subnet
+
+  # --- [3] Gateways & NAT ---
+  Igw:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: Cloud-IGW
+
+  AttachIgw:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VpcCloud
+      InternetGatewayId: !Ref Igw
+
+  EipNat1:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  NatGw1:
+    Type: AWS::EC2::NatGateway
+    DependsOn: AttachIgw # IGW가 활성화된 후 NAT 생성 권장
+    Properties:
+      AllocationId: !GetAtt EipNat1.AllocationId
+      SubnetId: !Ref SubPub1
+      Tags:
+        - Key: Name
+          Value: Cloud-NAT-GW-A
+
+  EipNat2:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  NatGw2:
+    Type: AWS::EC2::NatGateway
+    DependsOn: AttachIgw
+    Properties:
+      AllocationId: !GetAtt EipNat2.AllocationId
+      SubnetId: !Ref SubPub2
+      Tags:
+        - Key: Name
+          Value: Cloud-NAT-GW-C
+
+  IgwIdc:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: IDC-IGW
+
+  AttachIgwIdc:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VpcIdc
+      InternetGatewayId: !Ref IgwIdc
+
+  # --- [4] Transit Gateway (TGW) ---
+  SeoulTgw:
+    Type: AWS::EC2::TransitGateway
+    Properties:
+      Description: Connect Cloud and IDC VPCs
+      Tags:
+        - Key: Name
+          Value: Seoul-TGW
+
+  CloudAttach:
+    Type: AWS::EC2::TransitGatewayAttachment
+    Properties:
+      VpcId: !Ref VpcCloud
+      SubnetIds:
+        - !Ref SubPriv1
+        - !Ref SubPriv2
+      TransitGatewayId: !Ref SeoulTgw
+
+  IdcAttach:
+    Type: AWS::EC2::TransitGatewayAttachment
+    Properties:
+      VpcId: !Ref VpcIdc
+      SubnetIds:
+        - !Ref SubIdc
+      TransitGatewayId: !Ref SeoulTgw
+
+  # --- [5] Route Tables & Routes ---
+  RtPub:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VpcCloud
+      Tags:
+        - Key: Name
+          Value: RT-Cloud-Pub
+
+  RoutePubDefault:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref RtPub
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref Igw
+
+  RtPriv1:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VpcCloud
+      Tags:
+        - Key: Name
+          Value: RT-Cloud-Priv-1-AZa
+
+  RoutePriv1Default:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref RtPriv1
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGw1
+
+  RoutePriv1ToIdc:
+    Type: AWS::EC2::Route
+    DependsOn: CloudAttach  # <--- 추가: TGW와 VPC가 연결된 후에 라우팅을 만들어라!
+    Properties:
+      RouteTableId: !Ref RtPriv1
+      DestinationCidrBlock: 10.2.0.0/16
+      TransitGatewayId: !Ref SeoulTgw
+
+  RtPriv2:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VpcCloud
+      Tags:
+        - Key: Name
+          Value: RT-Cloud-Priv-2-AZc
+
+  RoutePriv2Default:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref RtPriv2
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGw2
+
+  RoutePriv2ToIdc:
+    Type: AWS::EC2::Route
+    DependsOn: CloudAttach  # <--- 추가
+    Properties:
+      RouteTableId: !Ref RtPriv2
+      DestinationCidrBlock: 10.2.0.0/16
+      TransitGatewayId: !Ref SeoulTgw
+
+  RtIdc:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VpcIdc
+      Tags:
+        - Key: Name
+          Value: RT-IDC
+
+  RouteIdcDefault:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref RtIdc
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref IgwIdc
+
+  RouteIdcToCloud:
+    Type: AWS::EC2::Route
+    DependsOn: IdcAttach    # <--- 추가: IDC 연결이 끝난 후 라우팅 생성
+    Properties:
+      RouteTableId: !Ref RtIdc
+      DestinationCidrBlock: 10.1.0.0/16
+      TransitGatewayId: !Ref SeoulTgw
+
+  # --- [6] Associations ---
+  AssocPub1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SubPub1
+      RouteTableId: !Ref RtPub
+  AssocPub2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SubPub2
+      RouteTableId: !Ref RtPub
+  AssocPriv1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SubPriv1
+      RouteTableId: !Ref RtPriv1
+  AssocPriv2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SubPriv2
+      RouteTableId: !Ref RtPriv2
+  AssocIdc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SubIdc
+      RouteTableId: !Ref RtIdc
+
+  # --- [7] Security Groups ---
+  SgCloud:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow HTTP and Internal Traffic
+      VpcId: !Ref VpcCloud
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: -1
+          CidrIp: 10.0.0.0/8
+
+  SgIdc:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow All Traffic for IDC
+      VpcId: !Ref VpcIdc
+      SecurityGroupIngress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+
+  # --- [8] Load Balancer (ALB) ---
+  SeoulAlb:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer  # 수정됨
+    Properties:
+      Scheme: internet-facing
+      Subnets:
+        - !Ref SubPub1
+        - !Ref SubPub2
+      SecurityGroups:
+        - !Ref SgCloud
+      Tags:
+        - Key: Name
+          Value: Seoul-ALB
+
+  AlbTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup   # 수정됨
+    Properties:
+      VpcId: !Ref VpcCloud
+      Port: 80
+      Protocol: HTTP
+      TargetType: instance
+      Targets:
+        - Id: !Ref InstWeb1
+        - Id: !Ref InstWeb2
+
+  AlbListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener      # 수정됨
+    Properties:
+      LoadBalancerArn: !Ref SeoulAlb
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref AlbTargetGroup
+
+  # --- [9] Instances ---
+  InstWeb1:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiId
+      SubnetId: !Ref SubPriv1
+      SecurityGroupIds:
+        - !Ref SgCloud
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: Seoul-Web-1
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          dnf update -y
+          dnf install -y httpd php php-mysqlnd
+          systemctl start httpd
+          systemctl enable httpd
+
+  InstWeb2:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiId
+      SubnetId: !Ref SubPriv2
+      SecurityGroupIds:
+        - !Ref SgCloud
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: Seoul-Web-2
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          dnf update -y
+          dnf install -y httpd php php-mysqlnd
+          systemctl start httpd
+          systemctl enable httpd
+
+  InstIdcDNS:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiId
+      SubnetId: !Ref SubIdc
+      SecurityGroupIds:
+        - !Ref SgIdc
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: IDC-DNS-Bind9
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          dnf update -y
+          dnf install -y bind bind-utils
+          systemctl start named
+          systemctl enable named
+
+  InstIdcDB:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiId
+      SubnetId: !Ref SubIdc
+      SecurityGroupIds:
+        - !Ref SgIdc
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: IDC-Master-DB
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          dnf update -y
+          dnf install -y mariadb105-server
+          systemctl start mariadb
+          systemctl enable mariadb

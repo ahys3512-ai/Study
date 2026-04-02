@@ -1,0 +1,358 @@
+Parameters:
+  KeyName:
+    Description: Name of existing EC2 KeyPair to enable SSH access to the instance
+    Type: AWS::EC2::KeyPair::KeyName
+    ConstraintDescription: must be the name of an existing EC2 KeyPair.
+  LatestAmiId:
+    Description: (DO NOT CHANGE)
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64'
+    AllowedValues:
+      - /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64
+
+Resources:
+  # --- [1] 네트워크 구성: VPC ---
+  AWSVPC1:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.70.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: AWS-VPC1
+
+  IDCVPC2:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.80.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: IDC-VPC2
+
+  # --- [2] 네트워크 구성: 서브넷 ---
+  AWSVPC1Subnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref AWSVPC1
+      CidrBlock: 10.70.1.0/24
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: AWS-VPC1-SN1
+
+  AWSVPC1Subnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref AWSVPC1
+      CidrBlock: 10.70.2.0/24
+      AvailabilityZone: !Select [ 2, !GetAZs '' ]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: AWS-VPC1-SN2
+
+  IDCVPC2Subnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref IDCVPC2
+      CidrBlock: 10.80.1.0/24
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: IDC-VPC2-SN
+
+  # --- [3] 게이트웨이 및 라우팅 ---
+  IGW1:
+    Type: AWS::EC2::InternetGateway
+  AttachIGW1:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref AWSVPC1
+      InternetGatewayId: !Ref IGW1
+
+  IGW2:
+    Type: AWS::EC2::InternetGateway
+  AttachIGW2:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref IDCVPC2
+      InternetGatewayId: !Ref IGW2
+
+  # VPC 피어링 (양쪽 VPC 연결)
+  VPCPeering:
+    Type: AWS::EC2::VPCPeeringConnection
+    Properties:
+      VpcId: !Ref AWSVPC1
+      PeerVpcId: !Ref IDCVPC2
+      Tags:
+        - Key: Name
+          Value: AWS-IDC-Peering
+
+  # 라우팅 테이블: AWS-VPC1
+  RT1:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref AWSVPC1
+      Tags:
+        - Key: Name
+          Value: AWS-RT
+
+  Route1Default:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref RT1
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref IGW1
+
+  Route1ToIDC:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref RT1
+      DestinationCidrBlock: 10.80.0.0/16
+      # VpcPeeringConnectionId (P가 대문자여야 함!)
+      VpcPeeringConnectionId: !Ref VPCPeering
+
+  # 라우팅 테이블: IDC-VPC2
+  RT2:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref IDCVPC2
+      Tags:
+        - Key: Name
+          Value: IDC-RT
+
+  Route2Default:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref RT2
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref IGW2
+
+  Route2ToAWS:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref RT2
+      DestinationCidrBlock: 10.70.0.0/16
+      # VpcPeeringConnectionId (P가 대문자여야 함!)
+      VpcPeeringConnectionId: !Ref VPCPeering
+
+  # 서브넷 연결
+  Assoc1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref RT1
+      SubnetId: !Ref AWSVPC1Subnet1
+  Assoc2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref RT1
+      SubnetId: !Ref AWSVPC1Subnet2
+  Assoc3:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref RT2
+      SubnetId: !Ref IDCVPC2Subnet
+
+  # --- [4] 보안 그룹 ---
+  AWSSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow All for Lab
+      VpcId: !Ref AWSVPC1
+      SecurityGroupIngress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+
+  IDCSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow All for IDC Lab
+      VpcId: !Ref IDCVPC2
+      SecurityGroupIngress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+
+  # --- [5] EC2 인스턴스 ---
+  # AWS-VPC1에 위치한 웹 서버
+  AWSWEB1:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiId
+      KeyName: !Ref KeyName
+      SubnetId: !Ref AWSVPC1Subnet1
+      PrivateIpAddress: 10.70.1.100
+      SecurityGroupIds:
+        - !Ref AWSSG
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          dnf install -y httpd
+          systemctl start httpd
+          systemctl enable httpd
+          echo "<h1>Welcome to AWS-WEB1 (10.70.1.100)</h1>" > /var/www/html/index.html
+      Tags:
+        - Key: Name
+          Value: AWS-WEB1
+
+  # IDC-VPC2에 위치한 웹 서버 (DNS 서버 겸용 가능)
+  IDCDNSSRV:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiId
+      KeyName: !Ref KeyName
+      SubnetId: !Ref IDCVPC2Subnet
+      PrivateIpAddress: 10.80.1.200
+      SecurityGroupIds:
+        - !Ref IDCSG
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          dnf install -y httpd
+          systemctl start httpd
+          systemctl enable httpd
+          echo "<h1>Welcome to IDC-SERVER (10.80.1.200)</h1>" > /var/www/html/index.html
+      Tags:
+        - Key: Name
+          Value: IDC-DNSSRV
+
+  # --- [6] Route 53 Resolver 구성 ---
+  # 인바운드 엔드포인트 (IDC -> AWS 도메인 확인용)
+  InboundEndpoint:
+    Type: AWS::Route53Resolver::ResolverEndpoint
+    Properties:
+      Direction: INBOUND
+      IpAddresses:
+        - SubnetId: !Ref AWSVPC1Subnet1
+        - SubnetId: !Ref AWSVPC1Subnet2
+      SecurityGroupIds:
+        - !Ref AWSSG
+      Tags:
+        - Key: Name
+          Value: R53-Inbound-EP
+
+  # 아웃바운드 엔드포인트 (AWS -> IDC 도메인 확인용)
+  OutboundEndpoint:
+    Type: AWS::Route53Resolver::ResolverEndpoint
+    Properties:
+      Direction: OUTBOUND
+      IpAddresses:
+        - SubnetId: !Ref AWSVPC1Subnet1
+        - SubnetId: !Ref AWSVPC1Subnet2
+      SecurityGroupIds:
+        - !Ref AWSSG
+      Tags:
+        - Key: Name
+          Value: R53-Outbound-EP
+
+  # 포워딩 룰: idcneta.internal은 IDC DNS(10.80.1.200)로 물어봐라
+  IDCForwardRule:
+    Type: AWS::Route53Resolver::ResolverRule
+    Properties:
+      DomainName: idcneta.internal
+      RuleType: FORWARD
+      ResolverEndpointId: !Ref OutboundEndpoint
+      TargetIps:
+        - Ip: 10.80.1.200
+          Port: '53'
+
+  RuleAssociation:
+    Type: AWS::Route53Resolver::ResolverRuleAssociation
+    Properties:
+      ResolverRuleId: !Ref IDCForwardRule
+      VPCId: !Ref AWSVPC1
+
+  # --- [7] AWS Private 호스팅 영역 및 레코드 ---
+  AWSHostedZone:
+    Type: AWS::Route53::HostedZone
+    Properties:
+      Name: awsneta.internal
+      VPCs:
+        - VPCId: !Ref AWSVPC1
+          VpcRegion: !Ref 'AWS::Region'
+
+  AWSWEB1Record:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref AWSHostedZone
+      Name: web1.awsneta.internal.
+      Type: A
+      TTL: '60'
+      ResourceRecords:
+        - 10.70.1.100
+
+#### ec2 존파일 권한 등등 설정 한번에 올리는 userdata 코드
+  # IDCDNSSRV:
+  #   Type: AWS::EC2::Instance
+  #   Properties:
+  #     InstanceType: t3.micro
+  #     ImageId: !Ref LatestAmiId
+  #     KeyName: !Ref KeyName
+  #     SubnetId: !Ref IDCVPC2Subnet
+  #     PrivateIpAddress: 10.80.1.200
+  #     SecurityGroupIds:
+  #       - !Ref IDCSG
+  #     UserData:
+  #       Fn::Base64: !Sub |
+  #         #!/bin/bash
+  #         # 1. BIND 패키지 설치
+  #         dnf install -y bind bind-utils
+
+  #         # 2. 메인 설정 파일(/etc/named.conf) 생성
+  #         cat <<EOF > /etc/named.conf
+  #         options {
+  #             listen-on port 53 { any; };
+  #             directory "/var/named";
+  #             dump-file "/var/named/data/cache_dump.db";
+  #             statistics-file "/var/named/data/named_stats.txt";
+  #             memstatistics-file "/var/named/data/named_mem_stats.txt";
+  #             allow-query { any; };
+  #             recursion yes;
+  #             dnssec-validation no;
+  #         };
+
+  #         zone "idcneta.internal" IN {
+  #             type master;
+  #             file "idcneta.internal.zone";
+  #             allow-query { any; };
+  #         };
+
+  #         zone "awsneta.internal" IN {
+  #             type forward;
+  #             forward only;
+  #             forwarders { 10.70.1.46; 10.70.2.153; }; # 인바운드 엔드포인트 IP (상황에 맞게 수정)
+  #         };
+
+  #         include "/etc/named.rfc1912.zones";
+  #         include "/etc/named.root.key";
+  #         EOF
+
+  #         # 3. 존 파일(/var/named/idcneta.internal.zone) 생성
+  #         cat <<EOF > /var/named/idcneta.internal.zone
+  #         \$TTL 3H
+  #         @   IN SOA  @ rname.invalid. ( 0 1D 1H 1W 3H )
+  #             NS  @
+  #             A   10.80.1.200
+  #         web IN  A   10.80.1.200
+  #         EOF
+
+  #         # 4. 권한 부여 (아까 우리를 괴롭혔던 그 부분!)
+  #         chown root:named /etc/named.conf
+  #         chown named:named /var/named/idcneta.internal.zone
+  #         chmod 644 /var/named/idcneta.internal.zone
+
+  #         # 5. 시스템 DNS 설정 수정 (자기 자신을 바라보게 함)
+  #         sed -i '1i nameserver 127.0.0.1' /etc/resolv.conf
+
+  #         # 6. 서비스 시작 및 활성화
+  #         systemctl start named
+  #         systemctl enable named
+  #     Tags:
+  #       - Key: Name
+  #         Value: IDC-DNSSRV        
