@@ -42,6 +42,10 @@ I demonstrate my technical growth through consistent daily coding and infrastruc
 ---
 
 ## ✍️ Recent Activity (최근 활동 / 最近の活動)
-* **2026-04-02:** * 🇰🇷 저장소 초기 설정 및 시간 범위 체크 알고리즘 구현
+* **2026-04-02:**
+* * 🇰🇷 저장소 초기 설정 및 시간 범위 체크 알고리즘 구현
   * 🇯🇵 リポジトリの初期設定および時刻範囲判定アルゴリズムの実装
   * 🇺🇸 Initial repository setup and implementation of time range check algorithm
+  * 🇰🇷 그동안 학습했던 AWS 관련 코드들 'AWS' 폴더에 업로드 완료
+  * 🇯🇵 これまで学習したAWS関連のコードを「AWS」フォルダにアップロード完了
+  * 🇺🇸 Uploaded previously studied AWS-related codes to the 'AWS' folder
