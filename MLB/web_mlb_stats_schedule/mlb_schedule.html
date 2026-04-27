@@ -3,232 +3,390 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>MLB 경기 조회</title>
+<title>MLB EV 분석</title>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+KR:wght@300;400;500&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg: #0a0a0a; --surface: #111111; --surface2: #181818;
-    --border: #2a2a2a; --accent: #c8f135; --accent2: #f13535;
-    --text: #f0f0f0; --muted: #666;
+    --bg:#0a0a0a; --surface:#111; --surface2:#181818;
+    --border:#2a2a2a; --accent:#c8f135; --red:#f13535;
+    --text:#f0f0f0; --muted:#666; --blue:#6ab3f5;
+    --green:#4ade80; --yellow:#fbbf24;
   }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: var(--bg); color: var(--text); font-family: 'IBM Plex Sans KR', sans-serif; min-height: 100vh; }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{background:var(--bg);color:var(--text);font-family:'IBM Plex Sans KR',sans-serif;min-height:100vh;}
 
-  header { border-bottom: 1px solid var(--border); padding: 2rem 2.5rem 1.5rem; display: flex; align-items: flex-end; gap: 2rem; flex-wrap: wrap; }
-  .logo { font-family: 'Bebas Neue', sans-serif; font-size: 3rem; letter-spacing: 0.08em; color: var(--accent); line-height: 1; }
-  .logo span { color: var(--text); }
-  .date-bar { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 280px; }
+  /* ── Header ── */
+  header{border-bottom:1px solid var(--border);padding:1.5rem 2rem;display:flex;align-items:center;gap:1.5rem;flex-wrap:wrap;}
+  .logo{font-family:'Bebas Neue',sans-serif;font-size:2.4rem;letter-spacing:.08em;color:var(--accent);line-height:1;}
+  .logo span{color:var(--text);}
+  .controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex:1;}
+  input[type=date],input[type=text]{background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:'IBM Plex Mono',monospace;font-size:13px;padding:7px 12px;border-radius:4px;outline:none;}
+  input[type=date]:focus,input[type=text]:focus{border-color:var(--accent);}
+  input[type=text]{width:230px;letter-spacing:.02em;}
+  input[type=text]::placeholder{color:#444;}
+  .btn{background:var(--accent);color:#000;border:none;font-family:'Bebas Neue',sans-serif;font-size:.95rem;letter-spacing:.1em;padding:7px 18px;border-radius:4px;cursor:pointer;transition:opacity .15s;white-space:nowrap;}
+  .btn:hover{opacity:.85;}
+  .btn-ghost{background:transparent;color:var(--muted);border:1px solid var(--border);font-family:'IBM Plex Mono',monospace;font-size:11px;padding:7px 12px;border-radius:4px;cursor:pointer;transition:color .15s,border-color .15s;}
+  .btn-ghost:hover{color:var(--text);border-color:var(--muted);}
+  .api-status{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--muted);margin-left:auto;white-space:nowrap;}
+  .api-status.ok{color:var(--green);}
+  .api-status.err{color:var(--red);}
 
-  input[type="date"] {
-    background: var(--surface2); border: 1px solid var(--border); color: var(--text);
-    font-family: 'IBM Plex Mono', monospace; font-size: 14px;
-    padding: 8px 14px; border-radius: 4px; outline: none; cursor: pointer;
-  }
-  input[type="date"]:focus { border-color: var(--accent); }
+  /* ── Status bar ── */
+  #status-bar{padding:.6rem 2rem;font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border);min-height:32px;display:flex;align-items:center;gap:1rem;}
 
-  .btn { background: var(--accent); color: #000; border: none; font-family: 'Bebas Neue', sans-serif; font-size: 1rem; letter-spacing: 0.1em; padding: 8px 20px; border-radius: 4px; cursor: pointer; transition: opacity 0.15s; }
-  .btn:hover { opacity: 0.85; }
-  .btn-ghost { background: transparent; color: var(--muted); border: 1px solid var(--border); font-family: 'IBM Plex Mono', monospace; font-size: 12px; padding: 8px 14px; border-radius: 4px; cursor: pointer; transition: color 0.15s, border-color 0.15s; }
-  .btn-ghost:hover { color: var(--text); border-color: var(--muted); }
+  /* ── EV Legend ── */
+  .legend{display:flex;align-items:center;gap:12px;margin-left:auto;flex-wrap:wrap;}
+  .leg{display:flex;align-items:center;gap:4px;font-size:10px;}
+  .leg-dot{width:8px;height:8px;border-radius:50%;}
 
-  #status-bar { padding: 0.75rem 2.5rem; font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: var(--muted); border-bottom: 1px solid var(--border); min-height: 36px; }
-  #games { padding: 2rem 2.5rem; display: flex; flex-direction: column; gap: 1.5rem; }
+  /* ── Games ── */
+  #games{padding:1.5rem 2rem;display:flex;flex-direction:column;gap:1.2rem;}
 
-  .game-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; animation: fadeUp 0.3s ease both; }
-  @keyframes fadeUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+  .game-card{background:var(--surface);border:1px solid var(--border);border-radius:8px;overflow:hidden;animation:fadeUp .25s ease both;}
+  @keyframes fadeUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
 
-  .game-header { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; padding: 1.25rem 1.5rem; gap: 1rem; border-bottom: 1px solid var(--border); }
-  .team-side { display: flex; flex-direction: column; gap: 4px; }
-  .team-side.home { align-items: flex-end; }
+  /* ── Card header: score ── */
+  .game-header{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;padding:1rem 1.5rem;gap:1rem;border-bottom:1px solid var(--border);}
+  .team-side{display:flex;flex-direction:column;gap:3px;}
+  .team-side.home{align-items:flex-end;}
+  .team-abbr{font-family:'Bebas Neue',sans-serif;font-size:1.8rem;letter-spacing:.05em;line-height:1;}
+  .team-abbr.winner{color:var(--accent);}
+  .team-abbr.loser{color:#444;}
+  .team-abbr.neutral{color:var(--text);}
+  .team-full{font-size:10px;color:var(--muted);font-weight:300;}
+  .score-center{display:flex;flex-direction:column;align-items:center;gap:5px;}
+  .score-box{display:flex;align-items:center;gap:12px;}
+  .score-num{font-family:'Bebas Neue',sans-serif;font-size:2.4rem;line-height:1;min-width:30px;text-align:center;}
+  .score-num.winner{color:var(--accent);}
+  .score-num.loser{color:#444;}
+  .score-num.neutral{color:var(--text);}
+  .score-sep{font-family:'IBM Plex Mono',monospace;font-size:1rem;color:var(--border);}
+  .status-badge{font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:.08em;text-transform:uppercase;padding:2px 7px;border-radius:2px;background:var(--surface2);color:var(--muted);border:1px solid var(--border);}
+  .status-badge.live{color:var(--accent);border-color:var(--accent);background:rgba(200,241,53,.08);}
+  .status-badge.sched{color:var(--blue);border-color:#2a4a6a;background:rgba(106,179,245,.08);}
 
-  .team-abbr { font-family: 'Bebas Neue', sans-serif; font-size: 2rem; letter-spacing: 0.05em; line-height: 1; }
-  .team-abbr.winner { color: var(--accent); }
-  .team-abbr.loser  { color: #444; }
-  .team-abbr.neutral { color: var(--text); }
-  .team-full { font-size: 11px; color: var(--muted); font-weight: 300; letter-spacing: 0.03em; }
+  /* ── Card body: 3-col ── */
+  .card-body{display:grid;grid-template-columns:1fr 2px 1fr 2px 1fr;}
+  .divider{background:var(--border);}
 
-  .score-center { display: flex; flex-direction: column; align-items: center; gap: 6px; }
-  .score-box { display: flex; align-items: center; gap: 14px; }
-  .score-num { font-family: 'Bebas Neue', sans-serif; font-size: 2.8rem; line-height: 1; min-width: 36px; text-align: center; }
-  .score-num.winner { color: var(--accent); }
-  .score-num.loser  { color: #444; }
-  .score-num.neutral { color: var(--text); }
-  .score-sep { font-family: 'IBM Plex Mono', monospace; font-size: 1.2rem; color: var(--border); }
+  .col{padding:.9rem 1.2rem;}
+  .col-title{font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:.6rem;}
 
-  .status-badge { font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; padding: 3px 8px; border-radius: 2px; background: var(--surface2); color: var(--muted); border: 1px solid var(--border); }
-  .status-badge.live  { color: var(--accent); border-color: var(--accent); background: rgba(200,241,53,0.08); }
-  .status-badge.sched { color: #6ab3f5; border-color: #2a4a6a; background: rgba(106,179,245,0.08); }
+  /* Stats col */
+  .pitcher-name{font-size:12px;font-weight:500;color:var(--text);margin-bottom:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .pitcher-name.na{color:#444;}
+  .stat-row{display:flex;justify-content:space-between;align-items:center;padding:3px 0;border-bottom:1px solid #1a1a1a;}
+  .stat-row:last-child{border-bottom:none;}
+  .stat-key{color:var(--muted);font-size:11px;font-weight:300;}
+  .stat-val{font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:500;color:var(--text);}
+  .stat-val.na{color:#333;}
+  .sec-title{font-family:'IBM Plex Mono',monospace;font-size:8px;letter-spacing:.1em;text-transform:uppercase;margin:7px 0 2px;padding-bottom:3px;border-bottom:1px solid #1e1e1e;color:#444;}
+  .sec-title.d5{color:#2a5a7a;}
+  .sec-title.d10{color:#2a5a3a;}
 
-  .game-stats { display: grid; grid-template-columns: 1fr 1fr; }
-  .team-stats { padding: 1rem 1.5rem; }
-  .team-stats:first-child { border-right: 1px solid var(--border); }
-  .stats-label { font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.1em; color: var(--muted); text-transform: uppercase; margin-bottom: 0.75rem; }
+  /* EV col */
+  .ev-block{margin-bottom:10px;}
+  .ev-team-label{font-size:10px;color:var(--muted);margin-bottom:4px;font-family:'IBM Plex Mono',monospace;}
+  .ev-row{display:flex;justify-content:space-between;align-items:center;padding:2px 0;}
+  .ev-label{font-size:10px;color:var(--muted);}
+  .ev-val{font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:500;}
+  .ev-val.pos{color:var(--green);}
+  .ev-val.neg{color:var(--red);}
+  .ev-val.na{color:#333;}
 
-  .pitcher-name { font-size: 13px; font-weight: 500; color: var(--text); margin-bottom: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .pitcher-name.na { color: #444; }
+  .ev-badge{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:3px;font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:500;margin-top:4px;}
+  .ev-badge.pos{background:rgba(74,222,128,.12);color:var(--green);border:1px solid rgba(74,222,128,.3);}
+  .ev-badge.neg{background:rgba(241,53,53,.08);color:var(--red);border:1px solid rgba(241,53,53,.2);}
+  .ev-badge.na{background:var(--surface2);color:#444;border:1px solid var(--border);}
 
-  .stat-row { display: flex; justify-content: space-between; align-items: center; padding: 5px 0; border-bottom: 1px solid #1a1a1a; font-size: 13px; }
-  .stat-row:last-child { border-bottom: none; }
-  .stat-key { color: var(--muted); font-weight: 300; font-size: 12px; }
-  .stat-val { font-family: 'IBM Plex Mono', monospace; font-size: 13px; font-weight: 500; color: var(--text); }
-  .stat-val.na { color: #333; }
+  .no-odds{color:#444;font-family:'IBM Plex Mono',monospace;font-size:11px;padding:8px 0;}
 
-  .loading-overlay { text-align: center; padding: 4rem 2rem; color: var(--muted); font-family: 'IBM Plex Mono', monospace; font-size: 13px; }
-  .dot-anim::after { content: ''; animation: dots 1.2s steps(4, end) infinite; }
-  @keyframes dots { 0%{content:''} 25%{content:'.'} 50%{content:'..'} 75%{content:'...'} }
-  .empty { color: var(--muted); font-size: 14px; padding: 3rem 0; text-align: center; font-family: 'IBM Plex Mono', monospace; }
-  .error { color: var(--accent2); font-size: 13px; padding: 3rem 0; text-align: center; font-family: 'IBM Plex Mono', monospace; line-height: 2; }
+  .loading-overlay{text-align:center;padding:3rem 2rem;color:var(--muted);font-family:'IBM Plex Mono',monospace;font-size:13px;}
+  .dot-anim::after{content:'';animation:dots 1.2s steps(4,end) infinite;}
+  @keyframes dots{0%{content:''}25%{content:'.'}50%{content:'..'}75%{content:'...'}}
+  .empty{color:var(--muted);font-size:13px;padding:3rem 0;text-align:center;font-family:'IBM Plex Mono',monospace;}
+  .error{color:var(--red);font-size:12px;padding:3rem 0;text-align:center;font-family:'IBM Plex Mono',monospace;line-height:2;}
 
-  @media (max-width: 600px) {
-    header { padding: 1.5rem 1rem 1rem; }
-    #games { padding: 1rem; }
-    #status-bar { padding: 0.75rem 1rem; }
-    .game-header { padding: 1rem; }
-    .team-stats { padding: 0.75rem 1rem; }
-    .team-abbr { font-size: 1.5rem; }
-    .score-num { font-size: 2.2rem; }
+  @media(max-width:700px){
+    header{padding:1rem;}
+    #games{padding:1rem;}
+    .card-body{grid-template-columns:1fr;}
+    .divider{display:none;}
+    .col{border-bottom:1px solid var(--border);}
+    .game-header{padding:.8rem 1rem;}
   }
 </style>
 </head>
 <body>
 
 <header>
-  <div class="logo">MLB<span>.</span>KR</div>
-  <div class="date-bar">
-    <input type="date" id="dateInput" />
-    <button class="btn" onclick="fetchSchedule()">조회</button>
-    <button class="btn-ghost" onclick="setRelativeDate(0)">오늘</button>
-    <button class="btn-ghost" onclick="setRelativeDate(-1)">어제</button>
+  <div class="logo">MLB<span>·</span>EV</div>
+  <div class="controls">
+    <input type="date" id="dateInput"/>
+    <button class="btn-ghost" onclick="setRel(0)">오늘</button>
+    <button class="btn-ghost" onclick="setRel(-1)">어제</button>
+    <input type="text" id="apiKeyInput" placeholder="Odds API Key 입력 (선택)"/>
+    <button class="btn" onclick="fetchAll()">조회</button>
   </div>
+  <div class="api-status" id="apiStatus">Odds API 미연결</div>
 </header>
 
-<div id="status-bar"></div>
+<div id="status-bar">
+  <span id="statusText">날짜를 선택하고 조회하세요</span>
+  <div class="legend">
+    <div class="leg"><div class="leg-dot" style="background:var(--green)"></div>EV+</div>
+    <div class="leg"><div class="leg-dot" style="background:var(--red)"></div>EV-</div>
+    <div class="leg"><div class="leg-dot" style="background:var(--muted)"></div>배당없음</div>
+  </div>
+</div>
 <div id="games"></div>
 
 <script>
 const API = 'http://localhost:5000/api';
+let currentDate = '';
+let oddsMap = {}; // teamName → {dec, impliedProb}
 
-function safe(val, fallback) {
-  if (val === undefined || val === null || val === '' || String(val).toLowerCase() === 'undefined') return fallback;
-  return val;
+// ── 유틸 ──────────────────────────────────────────────────
+function safe(v,fb){ return(v===undefined||v===null||v===''||String(v).toLowerCase()==='undefined')?fb:v; }
+
+function setRel(offset){
+  const d=new Date(); d.setDate(d.getDate()+offset);
+  document.getElementById('dateInput').value=d.toISOString().slice(0,10);
 }
 
-function setRelativeDate(offset) {
-  const d = new Date();
-  d.setDate(d.getDate() + offset);
-  document.getElementById('dateInput').value = d.toISOString().slice(0, 10);
-  fetchSchedule();
+function initDate(){
+  const kst=new Date(new Date().getTime()+9*3600000);
+  document.getElementById('dateInput').value=kst.toISOString().slice(0,10);
 }
 
-function initDate() {
-  const kst = new Date(new Date().getTime() + 9 * 3600000);
-  document.getElementById('dateInput').value = kst.toISOString().slice(0, 10);
-}
-
-async function fetchJSON(url) {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+async function fetchJSON(url){
+  const res=await fetch(url);
+  if(!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }
 
-async function getPitcherERA(id) {
-  if (!id) return '—';
-  try {
-    const d = await fetchJSON(`${API}/pitcher_era?id=${id}`);
-    const era = d?.stats?.[0]?.splits?.[0]?.stat?.era;
-    return era != null ? String(era) : '—';
-  } catch { return '—'; }
-}
-
-async function getTeamStats(teamId) {
-  if (!teamId) return { ops: '—', bullEra: '—' };
-  try {
-    const d = await fetchJSON(`${API}/team_stats?id=${teamId}`);
-    const ops  = d?.hitting?.stats?.[0]?.splits?.[0]?.stat?.ops;
-    const era  = d?.pitching?.stats?.[0]?.splits?.[0]?.stat?.era;
-    return {
-      ops:     ops  != null ? parseFloat(ops).toFixed(3) : '—',
-      bullEra: era  != null ? String(era) : '—',
-    };
-  } catch { return { ops: '—', bullEra: '—' }; }
-}
-
-async function enrichGame(g) {
-  const awayTeam   = g?.teams?.away?.team   || {};
-  const homeTeam   = g?.teams?.home?.team   || {};
-  const awaySpInfo = g?.teams?.away?.probablePitcher || {};
-  const homeSpInfo = g?.teams?.home?.probablePitcher || {};
-
-  const [awayEra, homeEra, awayStats, homeStats] = await Promise.all([
-    getPitcherERA(awaySpInfo.id),
-    getPitcherERA(homeSpInfo.id),
-    getTeamStats(awayTeam.id),
-    getTeamStats(homeTeam.id),
-  ]);
-
+// ── Pinnacle Odds 로드 ────────────────────────────────────
+// vig 제거: 양쪽 배당의 내재확률 합에서 비례 정규화
+function removeVig(decHome, decAway){
+  const rawHome = 1/decHome;
+  const rawAway = 1/decAway;
+  const total   = rawHome + rawAway;
   return {
-    game: g,
-    awayTeam, homeTeam,
-    away: { sp: safe(awaySpInfo.fullName, null), era: awayEra, ...awayStats },
-    home: { sp: safe(homeSpInfo.fullName, null), era: homeEra, ...homeStats },
+    home: rawHome / total,
+    away: rawAway / total,
   };
 }
 
-function statusInfo(g) {
-  const s = safe(g?.status?.detailedState, '');
-  if (s === 'Final' || s === 'Game Over') return { label: 'Final', cls: '' };
-  if (s.includes('Progress')) {
-    const inn  = safe(g?.linescore?.currentInningOrdinal, '');
-    const half = g?.linescore?.inningHalf === 'Top' ? '▲' : '▼';
-    return { label: `LIVE ${half}${inn}`, cls: 'live' };
+async function loadOdds(apiKey){
+  oddsMap = {};
+  if(!apiKey) return;
+
+  try {
+    const d = await fetchJSON(`${API}/odds?apiKey=${encodeURIComponent(apiKey)}`);
+
+    if(d.error){
+      document.getElementById('apiStatus').textContent = '❌ ' + d.error;
+      document.getElementById('apiStatus').className   = 'api-status err';
+      return;
+    }
+
+    const remaining = d.remaining ?? '?';
+    document.getElementById('apiStatus').textContent = `✅ Pinnacle 연결됨 · 잔여 ${remaining}회`;
+    document.getElementById('apiStatus').className   = 'api-status ok';
+
+    (d.games || []).forEach(game => {
+      const pinn = (game.bookmakers || []).find(b => b.key === 'pinnacle');
+      if(!pinn) return;
+
+      const h2h = (pinn.markets || []).find(m => m.key === 'h2h');
+      if(!h2h || h2h.outcomes.length < 2) return;
+
+      // outcomes: [{name: teamName, price: decimal}, ...]
+      const outcomes = h2h.outcomes;
+      // Odds API 팀명 매핑
+      const o0 = outcomes[0], o1 = outcomes[1];
+      const fair = removeVig(o0.price, o1.price);
+
+      oddsMap[o0.name] = { dec: o0.price, fair: fair.home, opponent: o1.name };
+      oddsMap[o1.name] = { dec: o1.price, fair: fair.away, opponent: o0.name };
+    });
+
+  } catch(e) {
+    document.getElementById('apiStatus').textContent = '❌ 오류: ' + e.message;
+    document.getElementById('apiStatus').className   = 'api-status err';
   }
-  if (s === 'Postponed') return { label: 'PPD', cls: '' };
-  const time = g?.gameDate
-    ? new Date(g.gameDate).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Seoul' })
-    : '';
-  return { label: time || s || '-', cls: 'sched' };
 }
 
-function statRow(key, val) {
-  const isNA = !val || val === '—' || val === '-';
-  return `<div class="stat-row">
-    <span class="stat-key">${key}</span>
-    <span class="stat-val${isNA ? ' na' : ''}">${isNA ? '—' : val}</span>
+// ── EV 계산 ───────────────────────────────────────────────
+// B방식: Pinnacle fair prob을 진짜 확률로 사용
+// EV% = (fair_prob × pinnacle_decimal - 1) × 100
+// → 자기 자신 배당에 베팅하면 항상 0에 수렴하므로
+//   여기선 Pinnacle을 sharp line 참조로만 보여주고
+//   EV = fair_prob × dec - 1 로 표현 (vig 제거 후 기댓값)
+function calcEV(teamName){
+  const entry = oddsMap[teamName];
+  if(!entry) return null;
+  const ev = (entry.fair * entry.dec - 1) * 100;
+  return { ev: ev.toFixed(2), dec: entry.dec.toFixed(2), fair: (entry.fair*100).toFixed(1) };
+}
+
+// 팀명 퍼지 매칭 (Odds API 팀명 ↔ MLB API 팀명)
+function findOddsTeam(mlbName){
+  if(!mlbName) return null;
+  // 직접 매칭
+  if(oddsMap[mlbName]) return mlbName;
+  // 마지막 단어(팀명)로 매칭
+  const last = mlbName.split(' ').pop().toLowerCase();
+  return Object.keys(oddsMap).find(k => k.toLowerCase().includes(last)) || null;
+}
+
+// ── MLB Stats ────────────────────────────────────────────
+async function getPitcherERA(id){
+  if(!id) return '—';
+  try{
+    const d=await fetchJSON(`${API}/pitcher_era?id=${id}`);
+    const era=d?.stats?.[0]?.splits?.[0]?.stat?.era;
+    return era!=null?String(era):'—';
+  }catch{return '—';}
+}
+
+function extractOPS(d){ const v=d?.stats?.[0]?.splits?.[0]?.stat?.ops; return v!=null?parseFloat(v).toFixed(3):'—'; }
+function extractERA(d){ const v=d?.stats?.[0]?.splits?.[0]?.stat?.era; return v!=null?String(v):'—'; }
+
+async function getTeamStats(tid){
+  const empty={ops:'—',bullEra:'—',ops5:'—',bullEra5:'—',ops10:'—',bullEra10:'—'};
+  if(!tid) return empty;
+  try{
+    const d=await fetchJSON(`${API}/team_stats?id=${tid}&date=${currentDate}`);
+    return{
+      ops:      extractOPS(d.hitting),
+      bullEra:  extractERA(d.pitching),
+      ops5:     extractOPS(d.hitting_last5),
+      bullEra5: extractERA(d.pitching_last5),
+      ops10:    extractOPS(d.hitting_last10),
+      bullEra10:extractERA(d.pitching_last10),
+    };
+  }catch{return empty;}
+}
+
+async function enrichGame(g){
+  const awayTeam  =g?.teams?.away?.team||{};
+  const homeTeam  =g?.teams?.home?.team||{};
+  const awaySp    =g?.teams?.away?.probablePitcher||{};
+  const homeSp    =g?.teams?.home?.probablePitcher||{};
+
+  const [awayEra,homeEra,awayStats,homeStats]=await Promise.all([
+    getPitcherERA(awaySp.id), getPitcherERA(homeSp.id),
+    getTeamStats(awayTeam.id), getTeamStats(homeTeam.id),
+  ]);
+
+  return{
+    game:g, awayTeam, homeTeam,
+    away:{sp:safe(awaySp.fullName,null), era:awayEra, ...awayStats},
+    home:{sp:safe(homeSp.fullName,null), era:homeEra, ...homeStats},
+  };
+}
+
+// ── Render ───────────────────────────────────────────────
+function statusInfo(g){
+  const s=safe(g?.status?.detailedState,'');
+  if(s==='Final'||s==='Game Over') return{label:'Final',cls:''};
+  if(s.includes('Progress')){
+    const inn=safe(g?.linescore?.currentInningOrdinal,'');
+    const half=g?.linescore?.inningHalf==='Top'?'▲':'▼';
+    return{label:`LIVE ${half}${inn}`,cls:'live'};
+  }
+  if(s==='Postponed') return{label:'PPD',cls:''};
+  const time=g?.gameDate?new Date(g.gameDate).toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit',timeZone:'Asia/Seoul'}):'';
+  return{label:time||s||'-',cls:'sched'};
+}
+
+function statRow(key,val){
+  const na=!val||val==='—'||val==='-';
+  return`<div class="stat-row"><span class="stat-key">${key}</span><span class="stat-val${na?' na':''}">${na?'—':val}</span></div>`;
+}
+
+function statsCol(d, title){
+  return`<div class="col">
+    <div class="col-title">${title}</div>
+    <div class="pitcher-name${d.sp?'':' na'}">${d.sp||'선발 미정'}</div>
+    ${statRow('선발 ERA',d.era)}
+    <div class="sec-title">시즌</div>
+    ${statRow('OPS',d.ops)}
+    ${statRow('불펜 ERA',d.bullEra)}
+    <div class="sec-title d5">최근 5일</div>
+    ${statRow('OPS',d.ops5)}
+    ${statRow('불펜 ERA',d.bullEra5)}
+    <div class="sec-title d10">최근 10일</div>
+    ${statRow('OPS',d.ops10)}
+    ${statRow('불펜 ERA',d.bullEra10)}
   </div>`;
 }
 
-function renderCard(r, idx) {
-  const g = r.game;
-  const status  = safe(g?.status?.detailedState, '');
-  const isFinal = status === 'Final' || status === 'Game Over';
-  const si      = statusInfo(g);
+function evCol(awayName, homeName){
+  const awayKey = findOddsTeam(awayName);
+  const homeKey = findOddsTeam(homeName);
+  const awayEV  = awayKey ? calcEV(awayKey) : null;
+  const homeEV  = homeKey ? calcEV(homeKey) : null;
 
-  const awayScore = g?.teams?.away?.score;
-  const homeScore = g?.teams?.home?.score;
-  const hasScore  = awayScore !== undefined && homeScore !== undefined;
-  const awayWin   = isFinal && hasScore && awayScore > homeScore;
-  const homeWin   = isFinal && hasScore && homeScore > awayScore;
+  if(!awayEV && !homeEV){
+    return`<div class="col">
+      <div class="col-title">Pinnacle EV</div>
+      <div class="no-odds">배당 정보 없음<br><span style="font-size:9px;color:#333">API 키를 입력하세요</span></div>
+    </div>`;
+  }
 
-  const abbrCls  = (win) => isFinal ? (win ? 'winner' : 'loser') : 'neutral';
-  const scoreCls = (win) => isFinal ? (win ? 'winner' : 'loser') : 'neutral';
+  function evBlock(label, evData){
+    if(!evData) return`<div class="ev-block"><div class="ev-team-label">${label}</div><div class="no-odds" style="font-size:10px">—</div></div>`;
+    const ev    = parseFloat(evData.ev);
+    const cls   = ev>=0?'pos':'neg';
+    const sign  = ev>=0?'+':'';
+    return`<div class="ev-block">
+      <div class="ev-team-label">${label}</div>
+      <div class="ev-row"><span class="ev-label">배당 (Pinnacle)</span><span class="ev-val">${evData.dec}</span></div>
+      <div class="ev-row"><span class="ev-label">fair 확률 (vig제거)</span><span class="ev-val">${evData.fair}%</span></div>
+      <div class="ev-row"><span class="ev-label">EV</span><span class="ev-val ${cls}">${sign}${evData.ev}%</span></div>
+      <div class="ev-badge ${cls}">${ev>=0?'▲ EV+':'▼ EV-'} ${sign}${evData.ev}%</div>
+    </div>`;
+  }
 
-  const awayAbbr = safe(r.awayTeam.abbreviation, safe(r.awayTeam.teamCode, 'AWY')).toUpperCase();
-  const homeAbbr = safe(r.homeTeam.abbreviation, safe(r.homeTeam.teamCode, 'HME')).toUpperCase();
-  const awayFull = safe(r.awayTeam.name, safe(r.awayTeam.teamName, ''));
-  const homeFull = safe(r.homeTeam.name, safe(r.homeTeam.teamName, ''));
+  return`<div class="col">
+    <div class="col-title">Pinnacle EV</div>
+    ${evBlock(awayName.split(' ').pop(), awayEV)}
+    <div style="height:8px"></div>
+    ${evBlock(homeName.split(' ').pop(), homeEV)}
+  </div>`;
+}
 
-  const scoreHTML = hasScore
-    ? `<div class="score-box">
-        <span class="score-num ${scoreCls(awayWin)}">${awayScore}</span>
-        <span class="score-sep">:</span>
-        <span class="score-num ${scoreCls(homeWin)}">${homeScore}</span>
-       </div>`
-    : `<div class="score-box"><span style="font-family:'IBM Plex Mono',monospace;font-size:12px;color:#444">vs</span></div>`;
+function renderCard(r, idx){
+  const g=r.game;
+  const status=safe(g?.status?.detailedState,'');
+  const isFinal=status==='Final'||status==='Game Over';
+  const si=statusInfo(g);
 
-  return `<div class="game-card" style="animation-delay:${idx * 0.05}s">
+  const awayScore=g?.teams?.away?.score;
+  const homeScore=g?.teams?.home?.score;
+  const hasScore=awayScore!==undefined&&homeScore!==undefined;
+  const awayWin=isFinal&&hasScore&&awayScore>homeScore;
+  const homeWin=isFinal&&hasScore&&homeScore>awayScore;
+
+  const ac=(w)=>isFinal?(w?'winner':'loser'):'neutral';
+  const sc=(w)=>isFinal?(w?'winner':'loser'):'neutral';
+
+  const awayAbbr=safe(r.awayTeam.abbreviation,safe(r.awayTeam.teamCode,'AWY')).toUpperCase();
+  const homeAbbr=safe(r.homeTeam.abbreviation,safe(r.homeTeam.teamCode,'HME')).toUpperCase();
+  const awayFull=safe(r.awayTeam.name,safe(r.awayTeam.teamName,''));
+  const homeFull=safe(r.homeTeam.name,safe(r.homeTeam.teamName,''));
+
+  const scoreHTML=hasScore
+    ?`<div class="score-box"><span class="score-num ${sc(awayWin)}">${awayScore}</span><span class="score-sep">:</span><span class="score-num ${sc(homeWin)}">${homeScore}</span></div>`
+    :`<div class="score-box"><span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#444">vs</span></div>`;
+
+  return`<div class="game-card" style="animation-delay:${idx*.05}s">
     <div class="game-header">
       <div class="team-side away">
-        <span class="team-abbr ${abbrCls(awayWin)}">${awayAbbr}</span>
+        <span class="team-abbr ${ac(awayWin)}">${awayAbbr}</span>
         <span class="team-full">${awayFull}</span>
       </div>
       <div class="score-center">
@@ -236,67 +394,61 @@ function renderCard(r, idx) {
         <span class="status-badge ${si.cls}">${si.label}</span>
       </div>
       <div class="team-side home">
-        <span class="team-abbr ${abbrCls(homeWin)}">${homeAbbr}</span>
+        <span class="team-abbr ${ac(homeWin)}">${homeAbbr}</span>
         <span class="team-full">${homeFull}</span>
       </div>
     </div>
-    <div class="game-stats">
-      <div class="team-stats">
-        <div class="stats-label">원정 · ${awayAbbr}</div>
-        <div class="pitcher-name${r.away.sp ? '' : ' na'}">${r.away.sp || '선발 미정'}</div>
-        ${statRow('선발 ERA', r.away.era)}
-        ${statRow('팀 OPS', r.away.ops)}
-        ${statRow('불펜 ERA', r.away.bullEra)}
-      </div>
-      <div class="team-stats">
-        <div class="stats-label">홈 · ${homeAbbr}</div>
-        <div class="pitcher-name${r.home.sp ? '' : ' na'}">${r.home.sp || '선발 미정'}</div>
-        ${statRow('선발 ERA', r.home.era)}
-        ${statRow('팀 OPS', r.home.ops)}
-        ${statRow('불펜 ERA', r.home.bullEra)}
-      </div>
+    <div class="card-body">
+      ${statsCol(r.away, '원정 · '+awayAbbr)}
+      <div class="divider"></div>
+      ${statsCol(r.home, '홈 · '+homeAbbr)}
+      <div class="divider"></div>
+      ${evCol(awayFull, homeFull)}
     </div>
   </div>`;
 }
 
-async function fetchSchedule() {
-  const dateVal = document.getElementById('dateInput').value;
-  if (!dateVal) return;
+// ── Main ─────────────────────────────────────────────────
+async function fetchAll(){
+  const dateVal=document.getElementById('dateInput').value;
+  const apiKey =document.getElementById('apiKeyInput').value.trim();
+  if(!dateVal) return;
+  currentDate=dateVal;
 
-  const gamesDiv  = document.getElementById('games');
-  const statusBar = document.getElementById('status-bar');
+  const gamesDiv =document.getElementById('games');
+  const statusTxt=document.getElementById('statusText');
 
-  gamesDiv.innerHTML = `<div class="loading-overlay"><span class="dot-anim">데이터 불러오는 중</span></div>`;
-  statusBar.textContent = '';
+  gamesDiv.innerHTML=`<div class="loading-overlay"><span class="dot-anim">데이터 불러오는 중</span></div>`;
+  statusTxt.textContent='';
 
-  try {
-    const data  = await fetchJSON(`${API}/schedule?date=${dateVal}`);
-    const dates = data?.dates || [];
+  // 배당 먼저 로드
+  if(apiKey) await loadOdds(apiKey);
 
-    if (!dates.length || !dates[0].games?.length) {
-      gamesDiv.innerHTML = '<div class="empty">해당 날짜에 경기가 없습니다</div>';
+  try{
+    const data=await fetchJSON(`${API}/schedule?date=${dateVal}`);
+    const dates=data?.dates||[];
+
+    if(!dates.length||!dates[0].games?.length){
+      gamesDiv.innerHTML='<div class="empty">해당 날짜에 경기가 없습니다</div>';
       return;
     }
 
-    const games = dates[0].games;
-    const [y, m, d] = dateVal.split('-');
-    statusBar.textContent = `${y}.${m}.${d} · 총 ${games.length}경기 · 스탯 로딩중...`;
+    const games=dates[0].games;
+    const [y,m,d]=dateVal.split('-');
+    statusTxt.textContent=`${y}.${m}.${d} · 총 ${games.length}경기 · 스탯 로딩중...`;
 
-    const results = await Promise.all(games.map(enrichGame));
-    statusBar.textContent = `${y}.${m}.${d} · 총 ${games.length}경기`;
-    gamesDiv.innerHTML = results.map((r, i) => renderCard(r, i)).join('');
+    const results=await Promise.all(games.map(enrichGame));
+    statusTxt.textContent=`${y}.${m}.${d} · 총 ${games.length}경기`;
+    gamesDiv.innerHTML=results.map((r,i)=>renderCard(r,i)).join('');
 
-  } catch (e) {
-    gamesDiv.innerHTML = `<div class="error">
-      서버에 연결할 수 없습니다<br>
-      <span style="color:#444;font-size:11px">터미널에서 python server.py 를 먼저 실행해주세요</span><br>
-      <span style="color:#333;font-size:11px">${e.message}</span>
-    </div>`;
+  }catch(e){
+    gamesDiv.innerHTML=`<div class="error">서버에 연결할 수 없습니다<br>
+      <span style="color:#444;font-size:10px">터미널에서 python server.py 를 먼저 실행해주세요</span><br>
+      <span style="color:#333;font-size:10px">${e.message}</span></div>`;
   }
 }
 
 initDate();
-fetchSchedule();
 </script>
 </body>
 </html>
