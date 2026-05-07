@@ -1,0 +1,26 @@
+﻿date,game_id,away_team,home_team,away_sp,home_sp,away_sp_confirmed,home_sp_confirmed,model_away_prob,model_home_prob,edge,actual_winner,correct,away_score,home_score,pinn_away_prob,pinn_home_prob,away_edge,home_edge
+2026-05-06,822985,Toronto Blue Jays,Tampa Bay Rays,Patrick Corbin,Shane McClanahan,True,True,48.4,51.6,,Tampa Bay Rays,1.0,0.0,3.0,45.2,57.1,3.1,-5.5
+2026-05-06,823063,Milwaukee Brewers,St. Louis Cardinals,Brandon Sproat,Andre Pallante,True,True,38.5,61.5,,Milwaukee Brewers,0.0,6.0,2.0,51.5,51.0,-13.1,10.5
+2026-05-06,824198,Los Angeles Dodgers,Houston Astros,Tyler Glasnow,Lance McCullers Jr.,True,True,56.8,43.2,,Los Angeles Dodgers,1.0,12.0,2.0,66.2,36.5,-9.5,6.7
+2026-05-06,823226,San Diego Padres,San Francisco Giants,Matt Waldron,Adrian Houser,True,True,55.7,44.3,,San Diego Padres,1.0,5.0,1.0,52.4,50.0,3.4,-5.7
+2026-05-06,824036,Chicago White Sox,Los Angeles Angels,Noah Schultz,Walbert Ure?a,True,True,61.2,38.8,,Los Angeles Angels,0.0,2.0,8.0,51.3,51.3,9.9,-12.5
+2026-05-06,823141,Atlanta Braves,Seattle Mariners,Mart?n P?rez,Bryan Woo,True,True,67.5,32.5,,Seattle Mariners,0.0,1.0,3.0,46.3,56.2,21.2,-23.7
+2026-05-06,824282,Boston Red Sox,Detroit Tigers,Sonny Gray,Jack Flaherty,True,True,59.9,40.1,,Boston Red Sox,1.0,4.0,0.0,49.8,52.6,10.1,-12.5
+2026-05-06,823470,Athletics,Philadelphia Phillies,Jeffrey Springs,Zack Wheeler,True,True,46.6,53.4,,Philadelphia Phillies,1.0,3.0,6.0,39.7,62.9,7.0,-9.5
+2026-05-06,823872,Baltimore Orioles,Miami Marlins,Brandon Young,Eury P?rez,True,True,38.9,61.1,,Baltimore Orioles,0.0,7.0,4.0,47.2,55.2,-8.3,5.9
+2026-05-06,822740,Minnesota Twins,Washington Nationals,Bailey Ober,Miles Mikolas,True,True,68.3,31.7,,Washington Nationals,0.0,2.0,15.0,56.2,46.3,12.1,-14.6
+2026-05-06,823550,Texas Rangers,New York Yankees,Nathan Eovaldi,Will Warren,True,True,29.9,70.1,,Texas Rangers,0.0,6.0,1.0,36.5,66.2,-6.5,3.8
+2026-05-06,824683,Cincinnati Reds,Chicago Cubs,Brady Singer,Colin Rea,True,True,29.9,70.1,,Chicago Cubs,1.0,6.0,7.0,39.8,62.9,-9.9,7.2
+2026-05-06,824118,Cleveland Guardians,Kansas City Royals,Joey Cantillo,Cole Ragans,True,True,49.7,50.3,,Cleveland Guardians,0.0,3.0,1.0,46.1,56.2,3.6,-5.8
+2026-05-06,824361,New York Mets,Colorado Rockies,Freddy Peralta,Michael Lorenzen,True,True,55.9,44.1,,New York Mets,1.0,10.0,5.0,61.7,40.8,-5.8,3.2
+2026-05-06,825091,Pittsburgh Pirates,Arizona Diamondbacks,Paul Skenes,Michael Soroka,True,True,60.0,40.0,,Pittsburgh Pirates,1.0,1.0,0.0,57.5,45.0,2.5,-5.0
+2026-05-07,823551,Texas Rangers,New York Yankees,MacKenzie Gore,Paul Blackburn,True,True,32.8,67.2,,,,,,,,,
+2026-05-07,822741,Minnesota Twins,Washington Nationals,Simeon Woods Richardson,Jake Irvin,True,True,33.6,66.4,,,,,,49.3,53.2,-15.7,13.3
+2026-05-07,824117,Cleveland Guardians,Kansas City Royals,Slade Cecconi,Seth Lugo,True,True,39.4,60.6,,,,,,44.4,58.1,-5.0,2.4
+2026-05-07,824681,Cincinnati Reds,Chicago Cubs,Rhett Lowder,Shota Imanaga,True,True,34.0,66.0,,,,,,37.5,65.4,-3.4,0.6
+2026-05-07,824362,New York Mets,Colorado Rockies,Christian Scott,Jose Quintana,True,True,53.1,46.9,,,,,,58.5,44.1,-5.3,2.8
+2026-05-07,825090,Pittsburgh Pirates,Arizona Diamondbacks,Mitch Keller,Zac Gallen,True,True,59.8,40.2,,,,,,52.1,50.3,7.7,-10.1
+2026-05-07,823467,Athletics,Philadelphia Phillies,J.T. Ginn,Andrew Painter,True,True,47.9,52.1,,,,,,45.5,56.8,2.4,-4.7
+2026-05-07,823870,Baltimore Orioles,Miami Marlins,Cade Povich,Max Meyer,True,True,42.2,57.8,,,,,,48.5,54.1,-6.4,3.8
+2026-05-07,824767,Tampa Bay Rays,Boston Red Sox,Griffin Jax,Jake Bennett,True,True,45.5,54.5,,,,,,48.5,54.1,-3.0,0.4
+2026-05-07,823306,St. Louis Cardinals,San Diego Padres,Matthew Liberatore,Michael King,True,True,45.4,54.6,,,,,,39.8,62.9,5.5,-8.3
