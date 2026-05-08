@@ -14,13 +14,28 @@
 2026-05-06,824118,Cleveland Guardians,Kansas City Royals,Joey Cantillo,Cole Ragans,True,True,49.7,50.3,,Cleveland Guardians,0.0,3.0,1.0,46.1,56.2,3.6,-5.8
 2026-05-06,824361,New York Mets,Colorado Rockies,Freddy Peralta,Michael Lorenzen,True,True,55.9,44.1,,New York Mets,1.0,10.0,5.0,61.7,40.8,-5.8,3.2
 2026-05-06,825091,Pittsburgh Pirates,Arizona Diamondbacks,Paul Skenes,Michael Soroka,True,True,60.0,40.0,,Pittsburgh Pirates,1.0,1.0,0.0,57.5,45.0,2.5,-5.0
-2026-05-07,823551,Texas Rangers,New York Yankees,MacKenzie Gore,Paul Blackburn,True,True,32.8,67.2,,,,,,,,,
-2026-05-07,822741,Minnesota Twins,Washington Nationals,Simeon Woods Richardson,Jake Irvin,True,True,33.6,66.4,,,,,,49.3,53.2,-15.7,13.3
-2026-05-07,824117,Cleveland Guardians,Kansas City Royals,Slade Cecconi,Seth Lugo,True,True,39.4,60.6,,,,,,44.4,58.1,-5.0,2.4
-2026-05-07,824681,Cincinnati Reds,Chicago Cubs,Rhett Lowder,Shota Imanaga,True,True,34.0,66.0,,,,,,37.5,65.4,-3.4,0.6
-2026-05-07,824362,New York Mets,Colorado Rockies,Christian Scott,Jose Quintana,True,True,53.1,46.9,,,,,,58.5,44.1,-5.3,2.8
-2026-05-07,825090,Pittsburgh Pirates,Arizona Diamondbacks,Mitch Keller,Zac Gallen,True,True,59.8,40.2,,,,,,52.1,50.3,7.7,-10.1
-2026-05-07,823467,Athletics,Philadelphia Phillies,J.T. Ginn,Andrew Painter,True,True,47.9,52.1,,,,,,45.5,56.8,2.4,-4.7
-2026-05-07,823870,Baltimore Orioles,Miami Marlins,Cade Povich,Max Meyer,True,True,42.2,57.8,,,,,,48.5,54.1,-6.4,3.8
-2026-05-07,824767,Tampa Bay Rays,Boston Red Sox,Griffin Jax,Jake Bennett,True,True,45.5,54.5,,,,,,48.5,54.1,-3.0,0.4
-2026-05-07,823306,St. Louis Cardinals,San Diego Padres,Matthew Liberatore,Michael King,True,True,45.4,54.6,,,,,,39.8,62.9,5.5,-8.3
+2026-05-07,823551,Texas Rangers,New York Yankees,MacKenzie Gore,Paul Blackburn,True,True,32.8,67.2,,New York Yankees,1.0,2.0,9.0,,,,
+2026-05-07,822741,Minnesota Twins,Washington Nationals,Simeon Woods Richardson,Jake Irvin,True,True,33.6,66.4,,Washington Nationals,1.0,5.0,7.0,49.3,53.2,-15.7,13.3
+2026-05-07,824117,Cleveland Guardians,Kansas City Royals,Slade Cecconi,Seth Lugo,True,True,39.4,60.6,,Cleveland Guardians,0.0,8.0,5.0,44.4,58.1,-5.0,2.4
+2026-05-07,824681,Cincinnati Reds,Chicago Cubs,Rhett Lowder,Shota Imanaga,True,True,34.0,66.0,,Chicago Cubs,1.0,3.0,8.0,37.5,65.4,-3.4,0.6
+2026-05-07,824362,New York Mets,Colorado Rockies,Christian Scott,Jose Quintana,True,True,53.1,46.9,,Colorado Rockies,0.0,2.0,6.0,58.5,44.1,-5.3,2.8
+2026-05-07,825090,Pittsburgh Pirates,Arizona Diamondbacks,Mitch Keller,Zac Gallen,True,True,59.8,40.2,,Pittsburgh Pirates,1.0,4.0,2.0,52.1,50.3,7.7,-10.1
+2026-05-07,823467,Athletics,Philadelphia Phillies,J.T. Ginn,Andrew Painter,True,True,47.9,52.1,,Athletics,0.0,12.0,1.0,45.5,56.8,2.4,-4.7
+2026-05-07,823870,Baltimore Orioles,Miami Marlins,Cade Povich,Max Meyer,True,True,42.2,57.8,,Miami Marlins,1.0,3.0,4.0,48.5,54.1,-6.4,3.8
+2026-05-07,824767,Tampa Bay Rays,Boston Red Sox,Griffin Jax,Jake Bennett,True,True,45.5,54.5,,Tampa Bay Rays,0.0,8.0,4.0,48.5,54.1,-3.0,0.4
+2026-05-07,823306,St. Louis Cardinals,San Diego Padres,Matthew Liberatore,Michael King,True,True,45.4,54.6,,St. Louis Cardinals,0.0,2.0,1.0,39.8,62.9,5.5,-8.3
+2026-05-08,824522,Houston Astros,Cincinnati Reds,Mike Burrows,Nick Lodolo,True,True,42.6,57.4,,,,,,44.4,58.1,-1.9,-0.7
+2026-05-08,823466,Colorado Rockies,Philadelphia Phillies,Chase Dollander,Jesús Luzardo,True,True,53.1,46.9,,,,,,35.5,67.1,17.7,-20.2
+2026-05-08,824846,Athletics,Baltimore Orioles,Jacob Lopez,Kyle Bradish,True,True,58.0,42.0,,,,,,45.7,56.8,12.4,-14.9
+2026-05-08,822822,Los Angeles Angels,Toronto Blue Jays,Reid Detmers,Dylan Cease,True,True,49.8,50.2,,,,,,42.0,60.6,7.8,-10.4
+2026-05-08,824768,Tampa Bay Rays,Boston Red Sox,Jesse Scholtens,Connelly Early,True,True,55.4,44.6,,,,,,45.5,56.8,10.0,-12.2
+2026-05-08,823871,Washington Nationals,Miami Marlins,Foster Griffin,Robby Snelling,True,True,63.7,36.3,,,,,,48.5,54.1,15.1,-17.7
+2026-05-08,824443,Minnesota Twins,Cleveland Guardians,Connor Prielipp,Parker Messick,True,True,49.7,50.3,,,,,,44.4,58.1,5.3,-7.9
+2026-05-08,824116,Detroit Tigers,Kansas City Royals,Keider Montero,Kris Bubic,True,True,43.9,56.1,,,,,,44.4,58.1,-0.5,-2.0
+2026-05-08,824607,Seattle Mariners,Chicago White Sox,Emerson Hancock,Sean Burke,True,True,47.9,52.1,,,,,,57.5,44.8,-9.6,7.3
+2026-05-08,823794,New York Yankees,Milwaukee Brewers,Max Fried,Jacob Misiorowski,True,True,61.0,39.0,,,,,,57.8,44.8,3.2,-5.9
+2026-05-08,822904,Chicago Cubs,Texas Rangers,Ben Brown,Kumar Rocker,True,True,66.8,33.2,,,,,,58.1,44.4,8.7,-11.3
+2026-05-08,825088,New York Mets,Arizona Diamondbacks,Nolan McLean,Ryne Nelson,True,True,63.4,36.6,,,,,,57.5,45.0,5.9,-8.4
+2026-05-08,823303,St. Louis Cardinals,San Diego Padres,Michael McGreevy,Griffin Canning,True,True,47.6,52.4,,,,,,43.1,59.5,4.5,-7.1
+2026-05-08,823957,Atlanta Braves,Los Angeles Dodgers,Chris Sale,Emmet Sheehan,True,True,49.6,50.4,,,,,,48.8,53.8,0.8,-3.4
+2026-05-08,823225,Pittsburgh Pirates,San Francisco Giants,Carmen Mlodzinski,미정,True,False,62.6,37.4,,,,,,,,,
