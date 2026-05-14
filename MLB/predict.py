@@ -86,7 +86,7 @@ def calc_win_prob(away_stats, home_stats, away_has_sp=True, home_has_sp=True):
 def fetch_schedule(date_str):
     """날짜별 경기 일정 가져오기 (YYYY-MM-DD)"""
     url = f"{MLB_API}/schedule?date={date_str}"
-    resp = requests.get(url, timeout=10)
+    resp = requests.get(url, timeout=60)
     data = resp.json()
     dates = data.get('dates', [])
     if not dates or not dates[0].get('games'):
@@ -94,9 +94,7 @@ def fetch_schedule(date_str):
     return dates[0]['games']
 
 def fetch_odds(api_key):
-    """Pinnacle 배당 가져오기"""
-    if not api_key:
-        return {}
+    """Odds API에서 배당 가져오기 (Vig 제거)"""
     
     try:
         url = f"{MLB_API}/odds?apiKey={api_key}"
@@ -134,12 +132,34 @@ def fetch_odds(api_key):
             if not h2h:
                 continue
             
-            # 팀별 배당
-            for outcome in h2h['outcomes']:
-                team_name = outcome['name']
-                decimal = outcome['price']
-                implied_prob = (1 / decimal) * 100  # 내재확률 (vig 포함)
-                odds_map[team_name] = implied_prob
+            # 배당 추출 (양팀)
+            outcomes = h2h['outcomes']
+            if len(outcomes) != 2:
+                continue
+            
+            away_odd = None
+            home_odd = None
+            
+            for outcome in outcomes:
+                if outcome['name'] == away_team:
+                    away_odd = outcome['price']
+                elif outcome['name'] == home_team:
+                    home_odd = outcome['price']
+            
+            if not away_odd or not home_odd:
+                continue
+            
+            # Vig 제거
+            away_implied = (1 / away_odd) * 100
+            home_implied = (1 / home_odd) * 100
+            total = away_implied + home_implied
+            
+            # 정규화 (합 = 100)
+            away_prob = (away_implied / total) * 100
+            home_prob = (home_implied / total) * 100
+            
+            odds_map[away_team] = away_prob
+            odds_map[home_team] = home_prob
         
         return odds_map
     
@@ -151,7 +171,7 @@ def fetch_pitcher_era(pid):
     if not pid:
         return '—'
     url = f"{MLB_API}/pitcher_era?id={pid}"
-    resp = requests.get(url, timeout=10)
+    resp = requests.get(url, timeout=60)
     data = resp.json()
     try:
         return str(data['stats'][0]['splits'][0]['stat']['era'])
@@ -160,7 +180,7 @@ def fetch_pitcher_era(pid):
 
 def fetch_team_stats(tid, date_str):
     url = f"{MLB_API}/team_stats?id={tid}&date={date_str}"
-    resp = requests.get(url, timeout=10)
+    resp = requests.get(url, timeout=60)
     data = resp.json()
     
     def extract_ops(d):

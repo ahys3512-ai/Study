@@ -1,0 +1,7 @@
+﻿date,game_id,away_team,home_team,away_sp,home_sp,away_sp_confirmed,home_sp_confirmed,away_matchup_score,home_matchup_score,model_away_prob,model_home_prob,pinn_away_prob,pinn_home_prob,away_edge,home_edge,actual_winner,correct,away_score,home_score
+2026-05-11,824441,Los Angeles Angels,Cleveland Guardians,미정,Joey Cantillo,False,True,0.5,0.5,50.0,50.0,39.2,63.3,10.8,-13.3,,,,
+2026-05-11,824844,New York Yankees,Baltimore Orioles,Ryan Weathers,Brandon Young,True,True,0.5,0.5,50.0,50.0,,,,,,,,
+2026-05-11,822818,Tampa Bay Rays,Toronto Blue Jays,Drew Rasmussen,Kevin Gausman,True,True,0.5,0.5,50.0,50.0,,,,,,,,
+2026-05-11,822901,Arizona Diamondbacks,Texas Rangers,Michael Soroka,Nathan Eovaldi,True,True,0.5,0.5,50.0,50.0,,,,,,,,
+2026-05-11,824199,Seattle Mariners,Houston Astros,George Kirby,Peter Lambert,True,True,0.5,0.5,50.0,50.0,,,,,,,,
+2026-05-11,823953,San Francisco Giants,Los Angeles Dodgers,Trevor McDonald,Roki Sasaki,True,True,0.5,0.5,50.0,50.0,,,,,,,,
